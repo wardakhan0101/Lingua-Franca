@@ -1,13 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-import 'dart:ui'; // Added for UI effects
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../services/analysis_storage_service.dart';
- // Import the storage service
 
 class FluencyScreen extends StatefulWidget {
   final String audioPath; // Path to the recorded user audio
@@ -22,10 +21,10 @@ class _FluencyScreenState extends State<FluencyScreen> {
   bool _isLoading = true;
   String _transcript = "";
   List<Map<String, dynamic>> _fluencyIssues = [];
-  final AnalysisStorageService _storageService = AnalysisStorageService(); // Initialize storage service
+  final AnalysisStorageService _storageService = AnalysisStorageService();
 
-  // REPLACE WITH YOUR KEY
-  final stt = dotenv.env['STT'];
+  final String? _apiUrl = dotenv.env['FLUENCY_API_URL'];
+
   @override
   void initState() {
     super.initState();
@@ -37,21 +36,18 @@ class _FluencyScreenState extends State<FluencyScreen> {
   Future<void> _analyzeFluency() async {
     debugPrint("=== STARTING FLUENCY ANALYSIS ===");
 
-    // Use Deepgram's pre-recorded API with filler_words enabled
-    // IMPORTANT: Use diarize=false and different model settings for better filler detection
-    final url = Uri.parse(
-        'https://api.deepgram.com/v1/listen?'
-            'model=nova-2&'
-            'filler_words=true&'
-            'punctuate=true&'
-            'utterances=false&'
-            'diarize=false');
+    if (_apiUrl == null || _apiUrl!.isEmpty) {
+      setState(() {
+        _transcript = "Error: FLUENCY_API_URL is not set in .env";
+        _isLoading = false;
+      });
+      return;
+    }
+
+    final url = Uri.parse('$_apiUrl/analyze');
 
     try {
-      // Read audio file
-      debugPrint("Attempting to read file: ${widget.audioPath}");
       final audioFile = File(widget.audioPath);
-
       final exists = await audioFile.exists();
       debugPrint("File exists: $exists");
 
@@ -66,28 +62,27 @@ class _FluencyScreenState extends State<FluencyScreen> {
         throw Exception("Audio file is empty or invalid (only ${audioBytes.length} bytes)");
       }
 
-      // Send Request
-      debugPrint("Sending request to Deepgram...");
-      final response = await http.post(
-        url,
-        headers: {
-          'Authorization': 'Token $stt',
-          'Content-Type': 'audio/wav',
-        },
-        body: audioBytes,
-      );
+      // Send as multipart/form-data to our Python API
+      debugPrint("Sending request to Fluency Engine API...");
+      final request = http.MultipartRequest('POST', url);
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        audioBytes,
+        filename: 'recording.wav',
+        contentType: MediaType('audio', 'wav'),
+      ));
 
-      debugPrint("Deepgram API response status: ${response.statusCode}");
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      debugPrint("Fluency API response status: ${response.statusCode}");
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        debugPrint("Deepgram response received");
-        // Only log first 500 chars to avoid cluttering
-        final responsePreview = jsonEncode(data).substring(0, min(500, jsonEncode(data).length));
-        debugPrint("Response preview: $responsePreview...");
-        _processDeepgramResponse(data);
+        debugPrint("Fluency API response received");
+        _processApiResponse(data);
       } else {
-        debugPrint("Deepgram API error: ${response.body}");
+        debugPrint("Fluency API error: ${response.body}");
         throw Exception('Failed to analyze audio: ${response.statusCode} - ${response.body}');
       }
     } catch (e, stackTrace) {
@@ -101,168 +96,19 @@ class _FluencyScreenState extends State<FluencyScreen> {
     }
   }
 
-  void _processDeepgramResponse(Map<String, dynamic> data) {
+  void _processApiResponse(Map<String, dynamic> data) {
     try {
-      // Deepgram returns a list of words with start/end timestamps
-      final words = data['results']['channels'][0]['alternatives'][0]['words'] as List;
-      final transcriptText = data['results']['channels'][0]['alternatives'][0]['transcript'];
+      final transcriptText = data['transcript'] as String? ?? '';
+      final issuesList = data['fluency_issues'] as List? ?? [];
 
-      debugPrint("=== PROCESSING DEEPGRAM RESPONSE ===");
-      debugPrint("Total words received: ${words.length}");
-
-      List<Map<String, dynamic>> issues = [];
-      List<String> fillerWordsFound = [];
-
-      // Common filler words list (expanded)
-      final fillerWordsList = [
-        'um', 'uh', 'hmm', 'hm', 'er', 'ah', 'eh',
-        'like', 'basically', 'actually', 'literally',
-        'sort', 'kind', 'you know', 'i mean', 'right',
-        'okay', 'so', 'well', 'yeah', 'mean'
-      ];
-
-      // --- ANALYSIS LOGIC ---
-
-      // 1. Detect Filler Words - Check both 'word' and 'punctuated_word' fields
-      debugPrint("=== CHECKING FOR FILLER WORDS ===");
-      for (int i = 0; i < words.length; i++) {
-        var word = words[i];
-
-        // Deepgram marks filler words with a 'filler' field when filler_words=true
-        bool isFillerMarked = word['filler'] == true;
-
-        // Also manually check the word itself
-        String wordText = '';
-        String punctuatedWord = '';
-
-        if (word.containsKey('punctuated_word')) {
-          punctuatedWord = word['punctuated_word'].toString().toLowerCase().trim();
-          wordText = punctuatedWord.replaceAll(RegExp(r'[^\w\s]'), '');
-        } else if (word.containsKey('word')) {
-          wordText = word['word'].toString().toLowerCase().trim();
-          punctuatedWord = wordText;
-        }
-
-        debugPrint("Word $i: '$punctuatedWord' (text='$wordText', filler=$isFillerMarked)");
-
-        // Check if it's a filler word
-        bool isFillerManual = fillerWordsList.any((filler) =>
-        wordText == filler || wordText.startsWith('$filler ') || wordText.endsWith(' $filler')
-        );
-
-        if (isFillerMarked || isFillerManual) {
-          String fillerFound = wordText.isEmpty ? punctuatedWord : wordText;
-          if (fillerFound.isEmpty) fillerFound = 'um';
-          fillerWordsFound.add(fillerFound);
-          debugPrint("✓ FILLER WORD DETECTED: '$fillerFound' (marked=$isFillerMarked, manual=$isFillerManual)");
-        }
-      }
-
-      debugPrint("Total filler words found: ${fillerWordsFound.length}");
-      if (fillerWordsFound.isNotEmpty) {
-        debugPrint("Filler words: ${fillerWordsFound.join(', ')}");
-      }
-
-      if (fillerWordsFound.isNotEmpty) {
-        // Count frequency of each filler word
-        Map<String, int> fillerFrequency = {};
-        for (var filler in fillerWordsFound) {
-          fillerFrequency[filler] = (fillerFrequency[filler] ?? 0) + 1;
-        }
-
-        String topFillers = fillerFrequency.entries
-            .map((e) => '${e.key} (${e.value}x)')
-            .take(5)
-            .join(", ");
-
-        issues.add({
-          "title": "FILLER WORDS",
-          "errorText": "${fillerWordsFound.length} filler words detected",
-          "explanation": "You used ${fillerWordsFound.length} filler words: $topFillers. This interrupts flow and makes you sound less confident.",
-          "suggestions": ["Pause silently instead", "Take a breath before speaking", "Practice speaking slowly"],
-        });
-      }
-
-      // 2. Detect Long Pauses (Pacing)
-      int longPauses = 0;
-      List<double> pauseDurations = [];
-
-      for (int i = 0; i < words.length - 1; i++) {
-        double endCurrent = words[i]['end'].toDouble();
-        double startNext = words[i + 1]['start'].toDouble();
-        double gap = startNext - endCurrent;
-
-        // If gap is greater than 1.2 seconds, count as a hesitation/long pause
-        if (gap > 1.2) {
-          longPauses++;
-          pauseDurations.add(gap);
-          debugPrint("Long pause detected: ${gap.toStringAsFixed(2)}s between words $i and ${i+1}");
-        }
-      }
-
-      if (longPauses > 0) {
-        double avgPause = pauseDurations.reduce((a, b) => a + b) / pauseDurations.length;
-        issues.add({
-          "title": "PACING",
-          "errorText": "$longPauses unnatural pauses",
-          "explanation": "Several gaps in speech were longer than 1.2 seconds (avg: ${avgPause.toStringAsFixed(1)}s). This suggests hesitation or lack of preparation.",
-          "suggestions": ["Keep speaking rhythm consistent", "Prepare your thoughts in advance", "Practice transitions between ideas"],
-        });
-      }
-
-      // 3. Speaking Speed Analysis
-      if (words.length > 5) {
-        double duration = words.last['end'].toDouble() - words.first['start'].toDouble();
-        int wordCount = words.length;
-        double wordsPerMinute = (wordCount / duration) * 60;
-
-        debugPrint("Speaking speed: ${wordsPerMinute.toStringAsFixed(0)} WPM");
-
-        if (wordsPerMinute < 100) {
-          issues.add({
-            "title": "SPEAKING SPEED",
-            "errorText": "Too slow (${wordsPerMinute.toStringAsFixed(0)} WPM)",
-            "explanation": "Your speaking pace is slower than the ideal 120-160 words per minute. This may lose audience attention.",
-            "suggestions": ["Practice speaking slightly faster", "Reduce long pauses", "Be more confident with your material"],
-          });
-        } else if (wordsPerMinute > 180) {
-          issues.add({
-            "title": "SPEAKING SPEED",
-            "errorText": "Too fast (${wordsPerMinute.toStringAsFixed(0)} WPM)",
-            "explanation": "Your speaking pace exceeds the ideal range. Speaking too quickly can reduce clarity.",
-            "suggestions": ["Slow down and enunciate", "Take deliberate pauses", "Focus on clarity over speed"],
-          });
-        }
-      }
-
-      // 4. Repetition Detection
-      Map<String, int> wordFrequency = {};
-      for (var word in words) {
-        String w = '';
-        if (word.containsKey('punctuated_word')) {
-          w = word['punctuated_word'].toString().toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
-        } else if (word.containsKey('word')) {
-          w = word['word'].toString().toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
-        }
-
-        if (w.length > 3 && !fillerWordsList.contains(w)) { // Only count words longer than 3 characters, exclude filler words
-          wordFrequency[w] = (wordFrequency[w] ?? 0) + 1;
-        }
-      }
-
-      List<String> repeatedWords = wordFrequency.entries
-          .where((e) => e.value > 3)
-          .map((e) => '${e.key} (${e.value}x)')
-          .toList();
-
-      if (repeatedWords.isNotEmpty) {
-        issues.add({
-          "title": "REPETITION",
-          "errorText": "${repeatedWords.length} words overused",
-          "explanation": "You repeated certain words too frequently: ${repeatedWords.take(3).join(", ")}. This suggests limited vocabulary.",
-          "suggestions": ["Use synonyms", "Expand vocabulary", "Vary your expressions"],
-        });
-      }
+      final issues = issuesList.map((issue) {
+        return {
+          'title': issue['title'] as String,
+          'errorText': issue['errorText'] as String,
+          'explanation': issue['explanation'] as String,
+          'suggestions': List<String>.from(issue['suggestions'] as List),
+        };
+      }).toList();
 
       debugPrint("Total issues found: ${issues.length}");
 
@@ -272,10 +118,9 @@ class _FluencyScreenState extends State<FluencyScreen> {
         _isLoading = false;
       });
 
-      // Store results in Firebase after analysis is complete
       _storeAnalysisResults();
     } catch (e, stackTrace) {
-      debugPrint("Error processing Deepgram response: $e");
+      debugPrint("Error processing API response: $e");
       debugPrint("Stack trace: $stackTrace");
       setState(() {
         _transcript = "Error processing audio analysis.";
