@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:lingua_franca/screens/chat_screen.dart';
 import 'package:lingua_franca/screens/developers_screen.dart';
 import 'package:lingua_franca/screens/profile_screen.dart';
-import 'package:lingua_franca/screens/stt_test.dart';
 import 'package:lingua_franca/screens/timed_presentation_screen.dart';
+import 'package:lingua_franca/screens/timed_presentation_test.dart';
 
 class _CircularProgressPainter extends CustomPainter {
   final double progress;

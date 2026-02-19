@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'timed_presentation_screen.dart';
+import 'timed_presentation_test.dart';
 import 'homophone_corrector.dart';
 
 class ChatScreen extends StatefulWidget {

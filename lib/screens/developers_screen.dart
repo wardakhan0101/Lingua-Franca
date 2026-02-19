@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lingua_franca/screens/fluency_screen.dart';
 import 'package:lingua_franca/screens/model_chatbot_screen.dart';
 import 'package:lingua_franca/screens/speech_recognition_screen.dart';
-import 'package:lingua_franca/screens/stt_test.dart';
+import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
 import 'package:lingua_franca/screens/native_stt_screen.dart';
