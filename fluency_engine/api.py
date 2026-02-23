@@ -159,8 +159,19 @@ async def analyze_audio(file: UploadFile = File(...)):
         tmp_path = tmp.name
 
     try:
-        # Transcribe with Whisper (word_timestamps=True gives us per-word start/end times)
-        result = model.transcribe(tmp_path, word_timestamps=True, language="en")
+        # Transcribe with Whisper.
+        # CRITICAL: initial_prompt biases the model to preserve filler words like um, uh, hmm.
+        # Without this, Whisper silently removes them from the output.
+        # condition_on_previous_text=False prevents the prompt from being appended to the transcript.
+        result = model.transcribe(
+            tmp_path,
+            word_timestamps=True,
+            language="en",
+            initial_prompt="Um, uh, hmm, er, ah, like, you know, basically, actually, so, well, right, okay, yeah.",
+            condition_on_previous_text=False,
+            prepend_punctuations="",
+            append_punctuations="",
+        )
 
         # Flatten all word segments into a single list
         all_words = []
