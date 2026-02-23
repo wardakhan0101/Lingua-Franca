@@ -1,10 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import whisper
+import spacy
 import tempfile
 import os
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 
 app = FastAPI(title="Fluency Analysis Engine", version="1.0.0")
 
@@ -15,53 +16,160 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load Whisper model once at startup (base = good accuracy, fast enough for Cloud Run)
+# Load models once at startup
 print("Loading Whisper model...")
 model = whisper.load_model("base")
 print("Whisper model loaded.")
 
-# --- Two-tier Filler Words System ---
+print("Loading spaCy model...")
+nlp = spacy.load("en_core_web_sm")
+print("spaCy model loaded.")
 
-# Hard fillers: ALWAYS a filler, never a real content word. Flagged even once.
-HARD_FILLERS = {'um', 'uh', 'hmm', 'hm', 'er', 'ah', 'eh'}
+# ---------------------------------------------------------------------------
+# Filler Word Definitions
+# ---------------------------------------------------------------------------
 
-# Soft fillers: ambiguous words that are ONLY flagged if used 3+ times.
-# e.g. "I'm so tired" → fine. "So, so, so basically..." → filler habit.
-SOFT_FILLERS = {
-    'like', 'basically', 'actually', 'literally',
-    'sort', 'kind', 'right', 'okay', 'so', 'well',
-    'yeah', 'mean', 'you know', 'i mean'
+# Hard fillers: phonetic hesitation sounds — NEVER a content word. Always flagged.
+HARD_FILLERS: Set[str] = {'um', 'uh', 'hmm', 'hm', 'er', 'ah', 'eh'}
+
+# Soft fillers: real words with dual roles (content vs. discourse marker).
+# Context is needed to decide. spaCy + position heuristics handle this.
+SOFT_FILLERS: Set[str] = {
+    'so', 'like', 'basically', 'actually', 'literally',
+    'right', 'okay', 'well', 'yeah', 'you know', 'i mean',
+    'sort', 'kind', 'mean'
 }
 
-SOFT_FILLER_THRESHOLD = 3  # flag soft filler only if used this many times or more
+# spaCy dependency labels that indicate a word is a DISCOURSE MARKER (filler role)
+FILLER_DEPS = {'cc', 'mark', 'intj', 'discourse', 'advmod'}
 
-def analyze_fluency(words: List[Dict]) -> List[Dict[str, Any]]:
+# spaCy POS tags that indicate the word is functioning as content
+CONTENT_POS = {'VERB', 'ADJ', 'NOUN', 'PROPN', 'NUM'}
+
+# spaCy head POS: if a soft filler modifies an ADJ or ADV, it's an intensifier (not filler)
+# e.g. "so tired" → "so" advmod → head "tired" is ADJ → content use
+INTENSIFIER_HEAD_POS = {'ADJ', 'ADV'}
+
+
+def is_soft_filler_contextual(token) -> bool:
+    """
+    Use spaCy dependency parse to decide if a soft filler word is
+    acting as a filler (discourse marker / sentence starter) or as
+    a real content word.
+
+    Returns True = IS a filler, False = content word, skip it.
+    """
+    dep = token.dep_
+    pos = token.pos_
+    head_pos = token.head.pos_
+
+    # "so tired", "so quickly" — "so" is an intensifier modifying ADJ/ADV → NOT filler
+    if dep == 'advmod' and head_pos in INTENSIFIER_HEAD_POS:
+        return False
+
+    # "I like pizza" — "like" is a verb → NOT filler
+    if pos == 'VERB':
+        return False
+
+    # "That's right" where right is adjective predicate → NOT filler
+    if dep in {'acomp', 'attr'} and pos == 'ADJ':
+        return False
+
+    # "Turn right" — direction adverb → NOT filler
+    if dep == 'advmod' and token.text.lower() == 'right' and head_pos == 'VERB':
+        return False
+
+    # "She did well" — manner adverb → NOT filler
+    if dep == 'advmod' and token.text.lower() == 'well' and head_pos == 'VERB':
+        return False
+
+    # Discourse markers, conjunctions, interjections → FILLER
+    if dep in FILLER_DEPS:
+        return True
+
+    # Sentence-initial position (ROOT or first token in doc) → FILLER
+    if dep == 'ROOT' and pos not in CONTENT_POS:
+        return True
+
+    # Default: assume content word (conservative — avoid false positives)
+    return False
+
+
+def is_soft_filler_position(word_data: Dict, all_words: List[Dict]) -> bool:
+    """
+    Option B fallback: use Whisper timing data.
+    A word is likely a filler if:
+      - It's the first word in the recording, OR
+      - Preceded by a gap > 0.4s (hesitation before speaking)
+    """
+    idx = all_words.index(word_data)
+    if idx == 0:
+        return True
+    gap_before = word_data.get('start', 0) - all_words[idx - 1].get('end', 0)
+    return gap_before > 0.4
+
+
+def detect_fillers(words: List[Dict], transcript: str) -> List[str]:
+    """
+    Detect filler words using a two-stage approach:
+      1. Hard fillers → always flagged
+      2. Soft fillers → spaCy dependency parse (primary) +
+                        position/pause heuristics (secondary)
+    Returns a flat list of filler words found (with repeats).
+    """
+    filler_words_found = []
+
+    # --- Stage 1: Hard fillers (no context needed) ---
+    for word_data in words:
+        w = re.sub(r'[^\w]', '', word_data.get('word', '').lower().strip())
+        if w in HARD_FILLERS:
+            filler_words_found.append(w)
+
+    # --- Stage 2: Soft fillers — parse full transcript with spaCy ---
+    doc = nlp(transcript)
+    token_map: Dict[str, bool] = {}  # lowercase word → is_filler decision
+
+    for token in doc:
+        w = token.text.lower().strip()
+        if w in SOFT_FILLERS:
+            is_filler = is_soft_filler_contextual(token)
+            # Store the first decision for each word form
+            # (multiple occurrences may have different roles — handle per-word below)
+            # We track per-token, keyed by (text, dep) to handle multiple roles
+            token_map[(w, token.dep_)] = is_filler
+
+    # Now go through word-level timestamps and apply decisions
+    for word_data in words:
+        w = re.sub(r'[^\w]', '', word_data.get('word', '').lower().strip())
+        if w not in SOFT_FILLERS:
+            continue
+
+        # Find matching spaCy token(s) for this word
+        matched_decision = None
+        for token in doc:
+            if token.text.lower().strip() == w:
+                matched_decision = is_soft_filler_contextual(token)
+                break  # use first match (same word usually has consistent role)
+
+        if matched_decision is None:
+            # Word not found in spaCy parse (edge case) — fall back to position
+            matched_decision = is_soft_filler_position(word_data, words)
+
+        if matched_decision:
+            filler_words_found.append(w)
+
+    return filler_words_found
+
+
+def analyze_fluency(words: List[Dict], transcript: str) -> List[Dict[str, Any]]:
     """Run all fluency checks and return a list of issue cards."""
     issues = []
 
     if not words:
         return issues
 
-    # 1. Filler Word Detection (two-tier)
-    word_texts = []
-    for word_data in words:
-        word_text = word_data.get("word", "").lower().strip()
-        word_text = re.sub(r'[^\w\s]', '', word_text)
-        word_texts.append(word_text)
-
-    # Count all words for frequency analysis
-    frequency: Dict[str, int] = {}
-    for w in word_texts:
-        if w in HARD_FILLERS or w in SOFT_FILLERS:
-            frequency[w] = frequency.get(w, 0) + 1
-
-    # Build final filler list: hard fillers always, soft fillers only if >= threshold
-    filler_words_found = []
-    for w, count in frequency.items():
-        if w in HARD_FILLERS:
-            filler_words_found.extend([w] * count)
-        elif w in SOFT_FILLERS and count >= SOFT_FILLER_THRESHOLD:
-            filler_words_found.extend([w] * count)
+    # 1. Filler Word Detection (spaCy + position heuristics)
+    filler_words_found = detect_fillers(words, transcript)
 
     if filler_words_found:
         filler_freq: Dict[str, int] = {}
@@ -135,11 +243,12 @@ def analyze_fluency(words: List[Dict]) -> List[Dict[str, Any]]:
                     ],
                 })
 
-    # 4. Word Repetition (non-filler words used > 3 times)
+    # 4. Word Repetition (content words used > 3 times, excluding all fillers)
+    all_fillers = HARD_FILLERS | SOFT_FILLERS
     word_freq: Dict[str, int] = {}
     for word_data in words:
         w = re.sub(r'[^\w]', '', word_data.get("word", "").lower())
-        if len(w) > 3 and w not in FILLER_WORDS:
+        if len(w) > 3 and w not in all_fillers:
             word_freq[w] = word_freq.get(w, 0) + 1
 
     repeated = [f"{k} ({v}x)" for k, v in word_freq.items() if v > 3]
@@ -163,26 +272,14 @@ def analyze_fluency(words: List[Dict]) -> List[Dict[str, Any]]:
 async def analyze_audio(file: UploadFile = File(...)):
     """
     Accepts an audio file (WAV/MP3/M4A), transcribes with Whisper,
-    runs fluency analysis, and returns a structured JSON report.
+    runs fluency analysis using spaCy + heuristics, returns structured JSON.
     """
-    # Validate file type
-    allowed_types = {"audio/wav", "audio/wave", "audio/mpeg", "audio/mp4",
-                     "audio/m4a", "audio/x-m4a", "application/octet-stream"}
-    if file.content_type and file.content_type not in allowed_types:
-        # Be lenient — mobile apps sometimes send wrong content-type
-        pass
-
-    # Save uploaded file to a temp location (Whisper needs a file path)
     suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = tmp.name
 
     try:
-        # Transcribe with Whisper.
-        # CRITICAL: initial_prompt biases the model to preserve filler words like um, uh, hmm.
-        # Without this, Whisper silently removes them from the output.
-        # condition_on_previous_text=False prevents the prompt from being appended to the transcript.
         result = model.transcribe(
             tmp_path,
             word_timestamps=True,
@@ -193,7 +290,6 @@ async def analyze_audio(file: UploadFile = File(...)):
             append_punctuations="",
         )
 
-        # Flatten all word segments into a single list
         all_words = []
         for segment in result.get("segments", []):
             for word in segment.get("words", []):
@@ -204,7 +300,7 @@ async def analyze_audio(file: UploadFile = File(...)):
                 })
 
         transcript = result.get("text", "").strip()
-        fluency_issues = analyze_fluency(all_words)
+        fluency_issues = analyze_fluency(all_words, transcript)
 
         return {
             "transcript": transcript,
@@ -216,11 +312,10 @@ async def analyze_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
     finally:
-        # Always clean up the temp file
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "model": "whisper-base"}
+    return {"status": "ok", "model": "whisper-base+spacy"}
