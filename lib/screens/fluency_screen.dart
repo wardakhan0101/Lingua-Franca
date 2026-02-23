@@ -111,6 +111,10 @@ class _FluencyScreenState extends State<FluencyScreen> {
       }).toList();
 
       debugPrint("Total issues found: ${issues.length}");
+      debugPrint("Transcript: $transcriptText");
+      for (var issue in issues) {
+        debugPrint("Issue detected: ${issue['title']} — ${issue['errorText']}");
+      }
 
       setState(() {
         _transcript = transcriptText;

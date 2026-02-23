@@ -20,13 +20,20 @@ print("Loading Whisper model...")
 model = whisper.load_model("base")
 print("Whisper model loaded.")
 
-# --- Filler Words List ---
-FILLER_WORDS = {
-    'um', 'uh', 'hmm', 'hm', 'er', 'ah', 'eh',
+# --- Two-tier Filler Words System ---
+
+# Hard fillers: ALWAYS a filler, never a real content word. Flagged even once.
+HARD_FILLERS = {'um', 'uh', 'hmm', 'hm', 'er', 'ah', 'eh'}
+
+# Soft fillers: ambiguous words that are ONLY flagged if used 3+ times.
+# e.g. "I'm so tired" → fine. "So, so, so basically..." → filler habit.
+SOFT_FILLERS = {
     'like', 'basically', 'actually', 'literally',
     'sort', 'kind', 'right', 'okay', 'so', 'well',
     'yeah', 'mean', 'you know', 'i mean'
 }
+
+SOFT_FILLER_THRESHOLD = 3  # flag soft filler only if used this many times or more
 
 def analyze_fluency(words: List[Dict]) -> List[Dict[str, Any]]:
     """Run all fluency checks and return a list of issue cards."""
@@ -35,20 +42,33 @@ def analyze_fluency(words: List[Dict]) -> List[Dict[str, Any]]:
     if not words:
         return issues
 
-    # 1. Filler Word Detection
-    filler_words_found = []
+    # 1. Filler Word Detection (two-tier)
+    word_texts = []
     for word_data in words:
         word_text = word_data.get("word", "").lower().strip()
         word_text = re.sub(r'[^\w\s]', '', word_text)
-        if word_text in FILLER_WORDS:
-            filler_words_found.append(word_text)
+        word_texts.append(word_text)
+
+    # Count all words for frequency analysis
+    frequency: Dict[str, int] = {}
+    for w in word_texts:
+        if w in HARD_FILLERS or w in SOFT_FILLERS:
+            frequency[w] = frequency.get(w, 0) + 1
+
+    # Build final filler list: hard fillers always, soft fillers only if >= threshold
+    filler_words_found = []
+    for w, count in frequency.items():
+        if w in HARD_FILLERS:
+            filler_words_found.extend([w] * count)
+        elif w in SOFT_FILLERS and count >= SOFT_FILLER_THRESHOLD:
+            filler_words_found.extend([w] * count)
 
     if filler_words_found:
-        frequency: Dict[str, int] = {}
+        filler_freq: Dict[str, int] = {}
         for w in filler_words_found:
-            frequency[w] = frequency.get(w, 0) + 1
+            filler_freq[w] = filler_freq.get(w, 0) + 1
         top_fillers = ", ".join(
-            f"{k} ({v}x)" for k, v in sorted(frequency.items(), key=lambda x: -x[1])[:5]
+            f"{k} ({v}x)" for k, v in sorted(filler_freq.items(), key=lambda x: -x[1])[:5]
         )
         issues.append({
             "title": "FILLER WORDS",
