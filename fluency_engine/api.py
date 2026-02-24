@@ -53,46 +53,82 @@ INTENSIFIER_HEAD_POS = {'ADJ', 'ADV'}
 
 def is_soft_filler_contextual(token) -> bool:
     """
-    Use spaCy dependency parse to decide if a soft filler word is
-    acting as a filler (discourse marker / sentence starter) or as
-    a real content word.
+    Determine whether a soft filler word is acting as a discourse filler
+    (return True) or as a real content word (return False).
 
-    Returns True = IS a filler, False = content word, skip it.
+    Uses word-specific rules because generic dep-tag sets are unreliable:
+    - spaCy tags discourse 'like' as 'prep' (not advmod)
+    - spaCy tags 'did well' with well=ROOT (triggers false ROOT rule)
+    - 'advmod' spans both manner adverbs (content) and discourse hedges (filler)
     """
     dep = token.dep_
     pos = token.pos_
     head_pos = token.head.pos_
+    word = token.text.lower()
 
-    # "so tired", "so quickly" — "so" is an intensifier modifying ADJ/ADV → NOT filler
-    if dep == 'advmod' and head_pos in INTENSIFIER_HEAD_POS:
-        return False
-
-    # "I like pizza" — "like" is a verb → NOT filler
+    # If it's functioning as a verb, it's never a filler
     if pos == 'VERB':
         return False
 
-    # "That's right" where right is adjective predicate → NOT filler
-    if dep in {'acomp', 'attr'} and pos == 'ADJ':
+    # ------------------------------------------------------------------
+    # Word-specific rules (most accurate approach for ambiguous words)
+    # ------------------------------------------------------------------
+
+    # 'like' — only non-filler when it's a verb ("I like pizza").
+    # All other roles (prep, advmod, cc) are filler/hedge uses.
+    # Note: spaCy often tags hedge 'like' as 'prep', not 'advmod'.
+    if word == 'like':
+        return True  # already returned False above for VERB
+
+    # 'so' — intensifier vs. discourse starter
+    if word == 'so':
+        # "I'm so tired" — intensifier modifying ADJ/ADV → NOT filler
+        if dep == 'advmod' and head_pos in {'ADJ', 'ADV'}:
+            return False
+        # Sentence-starting conjunction/marker → filler
+        if dep in {'cc', 'mark', 'intj', 'discourse'}:
+            return True
+        # ROOT 'so' that starts the sentence (token index 0 or 1)
+        if dep == 'ROOT' and token.i <= 1:
+            return True
+        return False  # conservative default
+
+    # 'actually', 'basically', 'literally' — filler unless clearly content
+    if word in {'actually', 'basically', 'literally'}:
+        # "actually good", "basically correct", "literally amazing" → NOT filler
+        if dep == 'advmod' and head_pos in {'ADJ', 'ADV', 'VERB'}:
+            return False
+        return True  # discourse use (sentence opener, hedge)
+
+    # 'well', 'right' — almost always content; only filler as discourse tags
+    # "She did well" → well=ROOT or advmod of VERB → NOT filler
+    # "Turned right" → right=advmod of VERB → NOT filler
+    # "Well, I think..." → well=intj/discourse → FILLER
+    # "right? right?" → right=intj → FILLER
+    if word in {'well', 'right'}:
+        if dep in {'intj', 'discourse', 'cc', 'mark'}:
+            return True
         return False
 
-    # "Turn right" — direction adverb → NOT filler
-    if dep == 'advmod' and token.text.lower() == 'right' and head_pos == 'VERB':
+    # 'yeah', 'okay' — response/agreement words
+    # As standalone responses they're fine; as sentence-padding they're fillers
+    if word in {'yeah', 'okay'}:
+        if dep in {'intj', 'discourse', 'cc', 'mark', 'ROOT'}:
+            return True
         return False
 
-    # "She did well" — manner adverb → NOT filler
-    if dep == 'advmod' and token.text.lower() == 'well' and head_pos == 'VERB':
-        return False
+    # 'kind', 'sort', 'mean' — very rarely fillers in isolation
+    if word in {'kind', 'sort', 'mean'}:
+        return False  # conservative — won't catch "kind of" edge cases
 
-    # Discourse markers, conjunctions, interjections → FILLER
-    if dep in FILLER_DEPS:
+    # ------------------------------------------------------------------
+    # General fallback for remaining soft fillers (you know, i mean, etc.)
+    # ------------------------------------------------------------------
+    if dep in {'cc', 'mark', 'intj', 'discourse'}:
         return True
 
-    # Sentence-initial position (ROOT or first token in doc) → FILLER
-    if dep == 'ROOT' and pos not in CONTENT_POS:
-        return True
+    return False  # conservative default — avoid false positives
 
-    # Default: assume content word (conservative — avoid false positives)
-    return False
 
 
 def is_soft_filler_position(word_data: Dict, all_words: List[Dict]) -> bool:
