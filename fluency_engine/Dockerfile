@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "import whisper; whisper.load_model('base')"
 
 # Verify spaCy model is installed correctly
-RUN python -c "import spacy; spacy.load('en_core_web_sm')"
+RUN python -c "import spacy; spacy.load('en_core_web_md')"
 
 # Copy app code
 COPY api.py .

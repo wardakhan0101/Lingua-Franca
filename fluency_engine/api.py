@@ -22,7 +22,7 @@ model = whisper.load_model("base")
 print("Whisper model loaded.")
 
 print("Loading spaCy model...")
-nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en_core_web_md")
 print("spaCy model loaded.")
 
 # ---------------------------------------------------------------------------
@@ -40,118 +40,100 @@ SOFT_FILLERS: Set[str] = {
     'sort', 'kind', 'mean'
 }
 
-# spaCy dependency labels that indicate a word is a DISCOURSE MARKER (filler role)
-FILLER_DEPS = {'cc', 'mark', 'intj', 'discourse', 'advmod'}
+# POS tags that always indicate content use (never a filler)
+CONTENT_POS = {'VERB', 'NOUN', 'ADJ', 'PROPN', 'NUM'}
 
-# spaCy POS tags that indicate the word is functioning as content
-CONTENT_POS = {'VERB', 'ADJ', 'NOUN', 'PROPN', 'NUM'}
-
-# spaCy head POS: if a soft filler modifies an ADJ or ADV, it's an intensifier (not filler)
-# e.g. "so tired" → "so" advmod → head "tired" is ADJ → content use
-INTENSIFIER_HEAD_POS = {'ADJ', 'ADV'}
+# Dependency labels where the word is a required argument of its head
+REQUIRED_DEPS = {'dobj', 'attr', 'acomp', 'oprd', 'npadvmod', 'nsubj', 'nsubjpass', 'pobj'}
 
 
 def is_soft_filler_contextual(token) -> bool:
     """
-    Determine whether a soft filler word is acting as a discourse filler
-    (return True) or as a real content word (return False).
+    Generic syntactic integration test.
 
-    Uses word-specific rules because generic dep-tag sets are unreliable:
-    - spaCy tags discourse 'like' as 'prep' (not advmod)
-    - spaCy tags 'did well' with well=ROOT (triggers false ROOT rule)
-    - 'advmod' spans both manner adverbs (content) and discourse hedges (filler)
+    A soft filler IS a filler (returns True) if it is syntactically
+    detached — i.e., removing it would NOT break the sentence.
+
+    A soft filler is NOT a filler (returns False) if it has dependents,
+    is a required argument, or modifies an ADJ/ADV/VERB as an intensifier.
     """
     dep = token.dep_
     pos = token.pos_
     head_pos = token.head.pos_
-    word = token.text.lower()
 
-    # If it's functioning as a verb, it's never a filler
-    if pos == 'VERB':
+    # ---- Gate 1: Content POS → never a filler ----
+    if pos in CONTENT_POS:
         return False
 
-    # ------------------------------------------------------------------
-    # Word-specific rules (most accurate approach for ambiguous words)
-    # ------------------------------------------------------------------
-
-    # 'like' — only non-filler when it's a verb ("I like pizza").
-    # All other roles (prep, advmod, cc) are filler/hedge uses.
-    # Note: spaCy often tags hedge 'like' as 'prep', not 'advmod'.
-    if word == 'like':
-        return True  # already returned False above for VERB
-
-    # 'so' — intensifier vs. discourse starter
-    if word == 'so':
-        # "I'm so tired" — intensifier modifying ADJ/ADV → NOT filler
-        if dep == 'advmod' and head_pos in {'ADJ', 'ADV'}:
-            return False
-        # Sentence-starting conjunction/marker → filler
-        if dep in {'cc', 'mark', 'intj', 'discourse'}:
-            return True
-        # ROOT 'so' that starts the sentence (token index 0 or 1)
-        if dep == 'ROOT' and token.i <= 1:
-            return True
-        return False  # conservative default
-
-    # 'actually', 'basically', 'literally' — filler unless clearly content
-    if word in {'actually', 'basically', 'literally'}:
-        # "actually good", "basically correct", "literally amazing" → NOT filler
-        if dep == 'advmod' and head_pos in {'ADJ', 'ADV', 'VERB'}:
-            return False
-        return True  # discourse use (sentence opener, hedge)
-
-    # 'well', 'right' — almost always content; only filler as discourse tags
-    # "She did well" → well=ROOT or advmod of VERB → NOT filler
-    # "Turned right" → right=advmod of VERB → NOT filler
-    # "Well, I think..." → well=intj/discourse → FILLER
-    # "right? right?" → right=intj → FILLER
-    if word in {'well', 'right'}:
-        if dep in {'intj', 'discourse', 'cc', 'mark'}:
-            return True
+    # ---- Gate 2: Has meaningful children → doing grammatical work ----
+    meaningful_children = [c for c in token.children if c.dep_ != 'punct']
+    if meaningful_children:
+        # Special case: preposition with an object → content
+        # "looks like a dog" — 'like' has pobj 'dog'
         return False
 
-    # 'yeah', 'okay' — response/agreement words
-    # As standalone responses they're fine; as sentence-padding they're fillers
-    if word in {'yeah', 'okay'}:
-        if dep in {'intj', 'discourse', 'cc', 'mark', 'ROOT'}:
-            return True
+    # ---- Gate 3: Required argument of its head → NOT filler ----
+    # e.g. "turn right", "did well", "looks right"
+    if dep in REQUIRED_DEPS:
         return False
 
-    # 'kind', 'sort', 'mean' — very rarely fillers in isolation
-    if word in {'kind', 'sort', 'mean'}:
-        return False  # conservative — won't catch "kind of" edge cases
-
-    # ------------------------------------------------------------------
-    # General fallback for remaining soft fillers (you know, i mean, etc.)
-    # ------------------------------------------------------------------
-    if dep in {'cc', 'mark', 'intj', 'discourse'}:
+    # ---- Gate 4: Interjection / discourse marker → always filler ----
+    if dep in {'intj', 'discourse'}:
         return True
 
-    return False  # conservative default — avoid false positives
+    # ---- Gate 5: Intensifier / manner adverb → NOT filler ----
+    # "so tired", "actually works", "really good", "literally exploded"
+    if dep == 'advmod' and head_pos in {'ADJ', 'ADV', 'VERB'}:
+        return False
+
+    # ---- Gate 6: Sentence-initial conjunction/marker → filler ----
+    # "So, I went..."  "Well, I think..."
+    if dep in {'cc', 'mark'} and token.i <= 1:
+        return True
+
+    # ---- Gate 7: ROOT with no children at sentence start → filler ----
+    # Standalone "Okay." / "Right." / "Yeah." at sentence start
+    if dep == 'ROOT' and token.i <= 1 and not meaningful_children:
+        return True
+
+    # ---- Gate 8: Preposition with no object → hedge/filler use ----
+    # "It was, like, crazy" — 'like' tagged prep with no pobj
+    if dep == 'prep':
+        has_object = any(c.dep_ in {'pobj', 'pcomp'} for c in token.children)
+        if not has_object:
+            return True
+        return False
+
+    # ---- Gate 9: advmod that is NOT modifying content → likely filler ----
+    # Catches hedge adverbs: "basically, ..." "actually, ..."
+    # (content modifiers already handled by Gate 5)
+    if dep == 'advmod' and head_pos not in {'ADJ', 'ADV', 'VERB'}:
+        return True
+
+    # Conservative default — don't flag uncertain cases
+    return False
 
 
-
-def is_soft_filler_position(word_data: Dict, all_words: List[Dict]) -> bool:
+def get_pause_before(word_data: Dict, all_words: List[Dict]) -> float:
     """
-    Option B fallback: use Whisper timing data.
-    A word is likely a filler if:
-      - It's the first word in the recording, OR
-      - Preceded by a gap > 0.4s (hesitation before speaking)
+    Return the silence gap (seconds) immediately before this word.
+    Returns a large value for the first word to indicate a natural pause.
     """
     idx = all_words.index(word_data)
     if idx == 0:
-        return True
-    gap_before = word_data.get('start', 0) - all_words[idx - 1].get('end', 0)
-    return gap_before > 0.4
+        return 1.0  # first word always has a "pause" before it
+    return word_data.get('start', 0) - all_words[idx - 1].get('end', 0)
 
 
 def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
     """
     Detect filler words using a two-stage approach:
-      1. Hard fillers → always flagged
-      2. Soft fillers → spaCy dependency parse (primary) +
-                        position/pause heuristics (secondary)
-    Returns a list of dicts: [{word, start_time}] for each detected filler.
+      1. Hard fillers → always flagged (no context needed)
+      2. Soft fillers → spaCy syntactic integration test (primary) +
+                        two-signal confirmation via pause/position (secondary)
+
+    A soft filler is only flagged when BOTH signals agree, unless the
+    syntactic signal is very strong (intj/discourse dep label).
     """
     detected: List[Dict] = []
 
@@ -164,12 +146,13 @@ def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
     # --- Stage 2: Soft fillers — parse full transcript with spaCy ---
     doc = nlp(transcript)
 
-    # Build a per-token decision map keyed by token index for accuracy
-    token_decisions: Dict[int, bool] = {}
+    # Build per-token decision map: token_index → (is_filler, dep_label)
+    token_decisions: Dict[int, tuple] = {}
     for token in doc:
         w = token.text.lower().strip()
         if w in SOFT_FILLERS:
-            token_decisions[token.i] = is_soft_filler_contextual(token)
+            is_filler = is_soft_filler_contextual(token)
+            token_decisions[token.i] = (is_filler, token.dep_)
 
     # Match Whisper words to spaCy tokens in order
     spacy_tokens = [t for t in doc if t.text.lower().strip() in SOFT_FILLERS]
@@ -181,19 +164,38 @@ def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
             continue
 
         # Advance spaCy pointer to find matching token
-        matched_decision = None
+        spacy_says_filler = None
+        dep_label = None
         while spacy_idx < len(spacy_tokens):
             token = spacy_tokens[spacy_idx]
             if token.text.lower().strip() == w:
-                matched_decision = token_decisions.get(token.i)
+                decision = token_decisions.get(token.i)
+                if decision is not None:
+                    spacy_says_filler, dep_label = decision
                 spacy_idx += 1
                 break
             spacy_idx += 1
 
-        if matched_decision is None:
-            matched_decision = is_soft_filler_position(word_data, words)
+        # Secondary signal: pause before the word
+        pause = get_pause_before(word_data, words)
+        has_pause = pause > 0.3
 
-        if matched_decision:
+        # Secondary signal: sentence-initial position
+        is_initial = (words.index(word_data) == 0)
+
+        # --- Two-signal confirmation ---
+        # Strong syntactic signal (intj/discourse) — flag even without pause
+        if dep_label in {'intj', 'discourse'}:
+            detected.append({'word': w, 'start_time': word_data.get('start', 0)})
+        # spaCy says filler AND secondary signal confirms
+        elif spacy_says_filler and (has_pause or is_initial):
+            detected.append({'word': w, 'start_time': word_data.get('start', 0)})
+        # spaCy says filler but no secondary signal — still flag if ROOT/cc/mark
+        # at sentence start (these are almost always fillers)
+        elif spacy_says_filler and dep_label in {'ROOT', 'cc', 'mark'}:
+            detected.append({'word': w, 'start_time': word_data.get('start', 0)})
+        # Fallback: spaCy had no match, use pause-only heuristic
+        elif spacy_says_filler is None and has_pause:
             detected.append({'word': w, 'start_time': word_data.get('start', 0)})
 
     # Sort by time so they appear in order
