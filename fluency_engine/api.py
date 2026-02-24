@@ -165,6 +165,33 @@ def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
     return detected
 
 
+def build_annotated_transcript(all_words: List[Dict], detected_fillers: List[Dict]) -> str:
+    """
+    Reconstruct the transcript from Whisper word list, wrapping exact detected filler
+    instances with [F]...[/F] markers.
+
+    Uses start_time to match filler instances precisely — so if 'like' appears twice
+    but only the second occurrence was detected as a filler, only the second is marked.
+    """
+    # Build a set of start_times for detected fillers (as rounded floats for matching)
+    filler_times = {round(f['start_time'], 2) for f in detected_fillers}
+
+    parts = []
+    for word_data in all_words:
+        word = word_data.get('word', '')
+        start = round(word_data.get('start', 0), 2)
+        clean = re.sub(r'[^\w]', '', word.lower().strip())
+
+        # Match this word instance to a detected filler by start_time
+        if start in filler_times and (clean in HARD_FILLERS or clean in SOFT_FILLERS):
+            parts.append(f'[F]{word.strip()}[/F]')
+            filler_times.discard(start)  # consume so duplicates don't double-match
+        else:
+            parts.append(word.strip())
+
+    return ' '.join(parts)
+
+
 def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict]]:
     """Run all fluency checks. Returns (issues, detected_fillers)."""
     issues = []
@@ -306,9 +333,11 @@ async def analyze_audio(file: UploadFile = File(...)):
 
         transcript = result.get("text", "").strip()
         fluency_issues, detected_fillers = analyze_fluency(all_words, transcript)
+        annotated_transcript = build_annotated_transcript(all_words, detected_fillers)
 
         return {
             "transcript": transcript,
+            "annotated_transcript": annotated_transcript,
             "fluency_issues": fluency_issues,
             "detected_fillers": detected_fillers,
             "word_count": len(all_words),

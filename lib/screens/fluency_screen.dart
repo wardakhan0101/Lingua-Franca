@@ -20,6 +20,7 @@ class FluencyScreen extends StatefulWidget {
 class _FluencyScreenState extends State<FluencyScreen> {
   bool _isLoading = true;
   String _transcript = "";
+  String _annotatedTranscript = ""; // contains [F]...[/F] markers
   List<Map<String, dynamic>> _fluencyIssues = [];
   List<Map<String, dynamic>> _detectedFillers = []; // [{word, start_time}]
   final AnalysisStorageService _storageService = AnalysisStorageService();
@@ -100,6 +101,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
   void _processApiResponse(Map<String, dynamic> data) {
     try {
       final transcriptText = data['transcript'] as String? ?? '';
+      final annotatedText = data['annotated_transcript'] as String? ?? transcriptText;
       final issuesList = data['fluency_issues'] as List? ?? [];
       final fillersList = data['detected_fillers'] as List? ?? [];
 
@@ -128,6 +130,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
 
       setState(() {
         _transcript = transcriptText;
+        _annotatedTranscript = annotatedText;
         _fluencyIssues = issues;
         _detectedFillers = fillers;
         _isLoading = false;
@@ -144,49 +147,60 @@ class _FluencyScreenState extends State<FluencyScreen> {
     }
   }
 
-  // Build a RichText that highlights detected filler words in amber/orange
+  // Build a RichText that highlights detected filler words in amber/orange.
+  // Parses [F]...[/F] markers from annotated_transcript returned by the API.
+  // Each [F]word[/F] instance is EXACTLY the filler detected by spaCy —
+  // so two occurrences of 'like' where only one is a filler will highlight only that one.
   Widget _buildAnnotatedTranscript() {
-    if (_transcript.isEmpty) {
-      return const Text("No speech detected.",
-          style: TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)));
-    }
-    if (_detectedFillers.isEmpty) {
-      return Text(_transcript,
-          style: const TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)));
+    final text = _annotatedTranscript.isEmpty
+        ? (_transcript.isEmpty ? "No speech detected." : _transcript)
+        : _annotatedTranscript;
+
+    if (!text.contains('[F]')) {
+      // No fillers — plain text
+      return Text(
+        text.isEmpty ? "No speech detected." : text,
+        style: const TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)),
+      );
     }
 
-    // Build a set of filler words to highlight (lowercase)
-    final fillerWordSet = _detectedFillers.map((f) => f['word'] as String).toSet();
-
-    // Split transcript into tokens preserving punctuation
-    final regex = RegExp(r"(\w+|[^\w])");
-    final matches = regex.allMatches(_transcript);
+    // Parse [F]word[/F] markers into RichText spans
     final spans = <TextSpan>[];
+    final marker = RegExp(r'\[F\](.*?)\[/F\]');
+    int cursor = 0;
 
-    for (final match in matches) {
-      final token = match.group(0)!;
-      final lower = token.toLowerCase().trim();
-      if (fillerWordSet.contains(lower)) {
+    for (final match in marker.allMatches(text)) {
+      // Text before this filler marker
+      if (match.start > cursor) {
         spans.add(TextSpan(
-          text: token,
+          text: text.substring(cursor, match.start),
           style: const TextStyle(
-            color: Color(0xFFD97706), // amber-600
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-            height: 1.6,
-            backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
-          ),
-        ));
-      } else {
-        spans.add(TextSpan(
-          text: token,
-          style: const TextStyle(
-            fontSize: 16,
-            height: 1.6,
-            color: Color(0xFF1F2937),
+            fontSize: 16, height: 1.6, color: Color(0xFF1F2937),
           ),
         ));
       }
+      // The filler word itself — highlighted
+      spans.add(TextSpan(
+        text: match.group(1),
+        style: const TextStyle(
+          color: Color(0xFFD97706),       // amber-600
+          fontWeight: FontWeight.w700,
+          fontSize: 16,
+          height: 1.6,
+          backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
+        ),
+      ));
+      cursor = match.end;
+    }
+
+    // Remaining text after last marker
+    if (cursor < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(cursor),
+        style: const TextStyle(
+          fontSize: 16, height: 1.6, color: Color(0xFF1F2937),
+        ),
+      ));
     }
 
     return RichText(text: TextSpan(children: spans));
