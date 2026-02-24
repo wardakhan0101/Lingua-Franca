@@ -1,202 +1,154 @@
-# Lingua Franca - Flutter Authentication App
+# Lingua Franca
 
-A Flutter application with Firebase Authentication integration, featuring login, sign-up, and password reset functionality.
+An AI-powered mobile app for improving spoken English through real-time conversational practice, speech analysis, and gamified progress tracking.
+
+Built with **Flutter** (frontend) and **Python FastAPI** (backend).
+
+---
 
 ## Features
 
-✅ **User Authentication**
-- Email/Password Sign Up
-- Email/Password Login
-- Password Reset (Forgot Password)
-- User Session Management
-- Automatic Auth State Persistence
+### AI Chatbot
+- Voice-first conversational practice powered by **Groq API** (LLaMA 3.1)
+- Speak via microphone or type — responses are generated in real-time
+- Built-in **homophone correction** engine for more accurate speech-to-text
 
-✅ **Beautiful UI**
-- Gradient background design matching mockup
-- Bot mascot icon integration
-- Smooth animations and transitions
-- Form validation
-- Loading states
-- Error handling with user-friendly messages
+### Timed Presentation Practice
+- Record yourself speaking on any topic with a configurable timer (15s – 5min)
+- Live transcript powered by **Deepgram** streaming STT
+- After recording, get a combined **grammar + fluency analysis report**
 
-✅ **Security**
-- Password visibility toggle
-- Minimum password requirements (6 characters)
-- Email validation
-- Firebase Authentication backend
+### Fluency Analysis
+- Audio is sent to a custom **Fluency Engine** backend
+- Transcribed with **OpenAI Whisper** and analyzed with **spaCy** NLP
+- Detects filler words (uh, um, like, basically, etc.) with context-aware filtering
+- Evaluates speech speed, pacing consistency, and long pauses
+- Filler words highlighted directly in the annotated transcript
+
+### Grammar Analysis
+- Text is checked via an external grammar API
+- Shows original vs corrected text, per-mistake cards with severity, suggestions, and category breakdown
+
+### Dashboard & Gamification
+- Personalized home screen with progress stats (fluency, grammar, vocabulary)
+- Streak tracking, achievement badges, and daily activity indicators
+- Bottom navigation across Home, Chat, Practice, and Profile
+
+### Authentication
+- Firebase Auth: email/password sign-up, login, forgot password
+- Auth state persistence and session management
+- User profiles with Firestore storage
+
+### Progress Storage
+- All analysis results (fluency + grammar) are stored in **Cloud Firestore**
+- Historical data powers the dashboard analytics
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | Flutter (Dart) |
+| **AI Chat** | Groq API (LLaMA 3.1 8B) |
+| **Live STT** | Deepgram (streaming), Sherpa-ONNX (on-device) |
+| **Fluency Backend** | Python FastAPI, OpenAI Whisper, spaCy |
+| **Grammar** | External grammar checking API |
+| **Auth & Storage** | Firebase Auth, Cloud Firestore |
+| **Deployment** | Google Cloud Run (backend), Docker |
+
+---
 
 ## Project Structure
 
 ```
 lib/
-├── main.dart                          # App entry point with auth wrapper
-├── services/
-│   └── auth_service.dart             # Firebase authentication service
-└── screens/
-    ├── login_screen.dart             # Login page
-    ├── signup_screen.dart            # Sign up page
-    ├── forgot_password_screen.dart   # Password reset page
-    └── home_screen.dart              # Home page after authentication
+├── main.dart                           # App entry point & auth wrapper
+├── screens/
+│   ├── login_screen.dart               # Login
+│   ├── signup_screen.dart              # Sign up
+│   ├── forgot_password_screen.dart     # Password reset
+│   ├── home_screen.dart                # Dashboard with stats & gamification
+│   ├── profile_screen.dart             # User profile
+│   ├── chat_screen.dart                # AI chatbot (Groq + voice input)
+│   ├── timed_presentation_screen.dart  # Timed speaking practice (Deepgram)
+│   ├── fluency_screen.dart             # Fluency analysis report
+│   ├── grammar_report_screen.dart      # Grammar analysis report
+│   ├── homophone_corrector.dart        # STT homophone correction engine
+│   ├── speech_recognition_screen.dart  # Standalone speech recognition
+│   ├── native_stt_screen.dart          # On-device STT (Sherpa-ONNX)
+│   └── developers_screen.dart          # About / developers info
+└── services/
+    ├── auth_service.dart               # Firebase authentication
+    ├── audio_recorder_service.dart      # Audio recording & file I/O
+    ├── stt_service.dart                # Speech-to-text service bridge
+    ├── grammar_api_service.dart        # Grammar API client
+    └── analysis_storage_service.dart   # Firestore storage for results
 
-assets/
-└── images/
-    └── bot_icon.png                  # Bot mascot icon
+fluency_engine/                         # Python backend
+├── api.py                              # FastAPI server (Whisper + spaCy)
+├── requirements.txt                    # Python dependencies
+├── Dockerfile                          # Container config
+└── README.md                           # Deployment guide
 ```
 
-## Setup Instructions
+---
 
-### 1. Firebase Configuration
+## Getting Started
 
-Before running the app, you need to configure Firebase. Follow the detailed instructions in [FIREBASE_SETUP.md](FIREBASE_SETUP.md).
+### Prerequisites
+- Flutter SDK (≥ 3.7.2)
+- A Firebase project with Auth & Firestore enabled
+- Python 3.10+ and `ffmpeg` (for the backend)
 
-**Quick Setup (Recommended):**
+### 1. Clone & Install Flutter Dependencies
 ```bash
-# Install FlutterFire CLI
-dart pub global activate flutterfire_cli
-
-# Configure Firebase
-flutterfire configure
-```
-
-Then update `lib/main.dart` to use the generated configuration:
-```dart
-import 'firebase_options.dart';
-
-await Firebase.initializeApp(
-  options: DefaultFirebaseOptions.currentPlatform,
-);
-```
-
-### 2. Install Dependencies
-
-```bash
+git clone https://github.com/wardakhan0101/FYP-Project.git
+cd FYP-Project
 flutter pub get
 ```
 
-### 3. Run the App
+### 2. Firebase Setup
+Follow the detailed guide in [FIREBASE_SETUP.md](FIREBASE_SETUP.md), or quick-start:
+```bash
+dart pub global activate flutterfire_cli
+flutterfire configure
+```
 
+### 3. Environment Variables
+Copy `.env.example` to `.env` and fill in your keys:
+```
+GROQ_API_KEY=your_groq_api_key
+STT=your_deepgram_api_key
+FLUENCY_API_URL=https://your-cloud-run-url.run.app
+```
+
+### 4. Run the App
 ```bash
 flutter run
 ```
 
-## Dependencies
+### 5. Run the Fluency Engine (Backend)
+```bash
+cd fluency_engine
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn api:app --reload --port 8000
+```
 
-- `firebase_core: ^3.6.0` - Firebase core functionality
-- `firebase_auth: ^5.3.1` - Firebase authentication
-- `flutter: sdk: flutter` - Flutter framework
-- `cupertino_icons: ^1.0.8` - iOS-style icons
+For production deployment to **Google Cloud Run**, see [fluency_engine/README.md](fluency_engine/README.md).
 
-## Features Overview
+---
 
-### Login Screen
-- Email address input
-- Password input with visibility toggle
-- Login button with loading state
-- "Forgot Password?" link
-- "Sign up" link for new users
-- Beautiful gradient background (light blue to purple)
-- Bot mascot icon
+## API Reference (Fluency Engine)
 
-### Sign Up Screen
-- Email address input
-- Password input with visibility toggle
-- Confirm password with validation
-- Sign up button with loading state
-- "Login" link for existing users
-- Same gradient design as login
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/analyze` | `POST` | Upload audio file → returns transcript, annotated transcript, filler word list, and fluency issues |
+| `/health` | `GET` | Health check — returns `{"status": "ok", "model": "whisper-base"}` |
 
-### Forgot Password Screen
-- Email address input
-- Send reset email functionality
-- Back button navigation
-- Success/error notifications
-
-### Home Screen
-- Welcome message
-- User email display
-- Sign out functionality
-- Authenticated user state
-
-## Authentication Flow
-
-1. **Initial Load**: App checks if user is already authenticated
-2. **Not Authenticated**: Shows Login Screen
-3. **User Signs Up**: Creates account → Redirects to Home Screen
-4. **User Logs In**: Validates credentials → Redirects to Home Screen
-5. **Forgot Password**: Sends reset email to user's email
-6. **Sign Out**: Logs out user → Returns to Login Screen
-
-## Error Handling
-
-The app handles various Firebase authentication errors:
-- User not found
-- Wrong password
-- Email already in use
-- Invalid email format
-- Weak password
-- User disabled
-- Network errors
-
-## UI Design
-
-The app follows the mockup design with:
-- **Primary Colors**: Light blue (#7BB9E8) to purple (#9B7EC9) gradient
-- **Accent Color**: Purple (#6B72AB) for buttons and icons
-- **Text**: White text on gradient background
-- **Components**: Rounded corners (12px border radius)
-- **Transparency**: Semi-transparent input fields
-
-## Testing the App
-
-1. **Sign Up Flow**:
-   - Click "Sign up" on login screen
-   - Enter valid email (e.g., test@example.com)
-   - Enter password (min 6 characters)
-   - Confirm password
-   - Click "Sign Up"
-
-2. **Login Flow**:
-   - Enter registered email
-   - Enter password
-   - Click "Login"
-
-3. **Forgot Password**:
-   - Click "Forgot the password?"
-   - Enter registered email
-   - Click "Reset Password"
-   - Check email inbox for reset link
-
-4. **Sign Out**:
-   - Click "Sign Out" on home screen
+---
 
 ## Platform Support
 
-- ✅ Android
-- ✅ iOS
-- ✅ Web (with additional Firebase web configuration)
-
-## Next Steps
-
-- [ ] Add email verification
-- [ ] Implement social authentication (Google, Facebook)
-- [ ] Add user profile management
-- [ ] Implement Firestore for user data
-- [ ] Add password strength indicator
-- [ ] Implement biometric authentication
-- [ ] Add multi-language support
-- [ ] Create onboarding screens
-
-## Troubleshooting
-
-See [FIREBASE_SETUP.md](FIREBASE_SETUP.md) for common issues and solutions.
-
-## License
-
-This project is open source and available under the MIT License.
-
-## Support
-
-For issues or questions, please refer to:
-- [Firebase Documentation](https://firebase.google.com/docs)
-- [FlutterFire Documentation](https://firebase.flutter.dev/)
-- [Flutter Documentation](https://flutter.dev/docs)
+- Android
