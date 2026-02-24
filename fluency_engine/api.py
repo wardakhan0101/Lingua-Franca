@@ -109,67 +109,72 @@ def is_soft_filler_position(word_data: Dict, all_words: List[Dict]) -> bool:
     return gap_before > 0.4
 
 
-def detect_fillers(words: List[Dict], transcript: str) -> List[str]:
+def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
     """
     Detect filler words using a two-stage approach:
       1. Hard fillers → always flagged
       2. Soft fillers → spaCy dependency parse (primary) +
                         position/pause heuristics (secondary)
-    Returns a flat list of filler words found (with repeats).
+    Returns a list of dicts: [{word, start_time}] for each detected filler.
     """
-    filler_words_found = []
+    detected: List[Dict] = []
 
     # --- Stage 1: Hard fillers (no context needed) ---
     for word_data in words:
         w = re.sub(r'[^\w]', '', word_data.get('word', '').lower().strip())
         if w in HARD_FILLERS:
-            filler_words_found.append(w)
+            detected.append({'word': w, 'start_time': word_data.get('start', 0)})
 
     # --- Stage 2: Soft fillers — parse full transcript with spaCy ---
     doc = nlp(transcript)
-    token_map: Dict[str, bool] = {}  # lowercase word → is_filler decision
 
+    # Build a per-token decision map keyed by token index for accuracy
+    token_decisions: Dict[int, bool] = {}
     for token in doc:
         w = token.text.lower().strip()
         if w in SOFT_FILLERS:
-            is_filler = is_soft_filler_contextual(token)
-            # Store the first decision for each word form
-            # (multiple occurrences may have different roles — handle per-word below)
-            # We track per-token, keyed by (text, dep) to handle multiple roles
-            token_map[(w, token.dep_)] = is_filler
+            token_decisions[token.i] = is_soft_filler_contextual(token)
 
-    # Now go through word-level timestamps and apply decisions
+    # Match Whisper words to spaCy tokens in order
+    spacy_tokens = [t for t in doc if t.text.lower().strip() in SOFT_FILLERS]
+    spacy_idx = 0  # pointer into spacy_tokens
+
     for word_data in words:
         w = re.sub(r'[^\w]', '', word_data.get('word', '').lower().strip())
         if w not in SOFT_FILLERS:
             continue
 
-        # Find matching spaCy token(s) for this word
+        # Advance spaCy pointer to find matching token
         matched_decision = None
-        for token in doc:
+        while spacy_idx < len(spacy_tokens):
+            token = spacy_tokens[spacy_idx]
             if token.text.lower().strip() == w:
-                matched_decision = is_soft_filler_contextual(token)
-                break  # use first match (same word usually has consistent role)
+                matched_decision = token_decisions.get(token.i)
+                spacy_idx += 1
+                break
+            spacy_idx += 1
 
         if matched_decision is None:
-            # Word not found in spaCy parse (edge case) — fall back to position
             matched_decision = is_soft_filler_position(word_data, words)
 
         if matched_decision:
-            filler_words_found.append(w)
+            detected.append({'word': w, 'start_time': word_data.get('start', 0)})
 
-    return filler_words_found
+    # Sort by time so they appear in order
+    detected.sort(key=lambda x: x['start_time'])
+    return detected
 
 
-def analyze_fluency(words: List[Dict], transcript: str) -> List[Dict[str, Any]]:
-    """Run all fluency checks and return a list of issue cards."""
+def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict]]:
+    """Run all fluency checks. Returns (issues, detected_fillers)."""
     issues = []
 
     if not words:
-        return issues
+        return issues, []
 
     # 1. Filler Word Detection (spaCy + position heuristics)
-    filler_words_found = detect_fillers(words, transcript)
+    detected_fillers = detect_fillers(words, transcript)
+    filler_words_found = [f['word'] for f in detected_fillers]
 
     if filler_words_found:
         filler_freq: Dict[str, int] = {}
@@ -265,7 +270,7 @@ def analyze_fluency(words: List[Dict], transcript: str) -> List[Dict[str, Any]]:
             ],
         })
 
-    return issues
+    return issues, detected_fillers
 
 
 @app.post("/analyze")
@@ -300,11 +305,12 @@ async def analyze_audio(file: UploadFile = File(...)):
                 })
 
         transcript = result.get("text", "").strip()
-        fluency_issues = analyze_fluency(all_words, transcript)
+        fluency_issues, detected_fillers = analyze_fluency(all_words, transcript)
 
         return {
             "transcript": transcript,
             "fluency_issues": fluency_issues,
+            "detected_fillers": detected_fillers,
             "word_count": len(all_words),
         }
 

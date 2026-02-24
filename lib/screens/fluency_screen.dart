@@ -21,6 +21,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
   bool _isLoading = true;
   String _transcript = "";
   List<Map<String, dynamic>> _fluencyIssues = [];
+  List<Map<String, dynamic>> _detectedFillers = []; // [{word, start_time}]
   final AnalysisStorageService _storageService = AnalysisStorageService();
 
   final String? _apiUrl = dotenv.env['FLUENCY_API_URL'];
@@ -100,6 +101,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
     try {
       final transcriptText = data['transcript'] as String? ?? '';
       final issuesList = data['fluency_issues'] as List? ?? [];
+      final fillersList = data['detected_fillers'] as List? ?? [];
 
       final issues = issuesList.map((issue) {
         return {
@@ -110,15 +112,24 @@ class _FluencyScreenState extends State<FluencyScreen> {
         };
       }).toList();
 
+      final fillers = fillersList.map((f) {
+        return {
+          'word': f['word'] as String,
+          'start_time': (f['start_time'] as num).toDouble(),
+        };
+      }).toList().cast<Map<String, dynamic>>();
+
       debugPrint("Total issues found: ${issues.length}");
       debugPrint("Transcript: $transcriptText");
       for (var issue in issues) {
         debugPrint("Issue detected: ${issue['title']} — ${issue['errorText']}");
       }
+      debugPrint("Detected fillers: ${fillers.map((f) => '${f['word']}@${f['start_time'].toStringAsFixed(1)}s').join(', ')}");
 
       setState(() {
         _transcript = transcriptText;
         _fluencyIssues = issues;
+        _detectedFillers = fillers;
         _isLoading = false;
       });
 
@@ -131,6 +142,54 @@ class _FluencyScreenState extends State<FluencyScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  // Build a RichText that highlights detected filler words in amber/orange
+  Widget _buildAnnotatedTranscript() {
+    if (_transcript.isEmpty) {
+      return const Text("No speech detected.",
+          style: TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)));
+    }
+    if (_detectedFillers.isEmpty) {
+      return Text(_transcript,
+          style: const TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)));
+    }
+
+    // Build a set of filler words to highlight (lowercase)
+    final fillerWordSet = _detectedFillers.map((f) => f['word'] as String).toSet();
+
+    // Split transcript into tokens preserving punctuation
+    final regex = RegExp(r"(\w+|[^\w])");
+    final matches = regex.allMatches(_transcript);
+    final spans = <TextSpan>[];
+
+    for (final match in matches) {
+      final token = match.group(0)!;
+      final lower = token.toLowerCase().trim();
+      if (fillerWordSet.contains(lower)) {
+        spans.add(TextSpan(
+          text: token,
+          style: const TextStyle(
+            color: Color(0xFFD97706), // amber-600
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+            height: 1.6,
+            backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
+          ),
+        ));
+      } else {
+        spans.add(TextSpan(
+          text: token,
+          style: const TextStyle(
+            fontSize: 16,
+            height: 1.6,
+            color: Color(0xFF1F2937),
+          ),
+        ));
+      }
+    }
+
+    return RichText(text: TextSpan(children: spans));
   }
 
   // Store the analysis results in Firebase
@@ -273,14 +332,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
                           ),
                           Padding(
                             padding: const EdgeInsets.all(20),
-                            child: Text(
-                              _transcript.isEmpty ? "No speech detected." : _transcript,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                height: 1.6,
-                                color: Color(0xFF1F2937),
-                              ),
-                            ),
+                            child: _buildAnnotatedTranscript(),
                           ),
                         ],
                       ),
