@@ -1,0 +1,21 @@
+steps:
+# 1. Try to pull the previous image to use as a cache
+- name: 'gcr.io/cloud-builders/docker'
+  entrypoint: 'bash'
+  args: ['-c', 'docker pull us-central1-docker.pkg.dev/$PROJECT_ID/fluency-engine/api:latest || exit 0']
+
+# 2. Build the new image, using the pulled image as cache
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+    'build',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/fluency-engine/api:latest',
+    '--cache-from', 'us-central1-docker.pkg.dev/$PROJECT_ID/fluency-engine/api:latest',
+    '.'
+  ]
+
+# 3. Push the newly built image
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/fluency-engine/api:latest']
+
+images:
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/fluency-engine/api:latest'

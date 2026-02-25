@@ -17,15 +17,18 @@ class FluencyScreen extends StatefulWidget {
   State<FluencyScreen> createState() => _FluencyScreenState();
 }
 
-class _FluencyScreenState extends State<FluencyScreen> {
+class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveClientMixin<FluencyScreen> {
   bool _isLoading = true;
   String _transcript = "";
-  String _annotatedTranscript = ""; // contains [F]...[/F] markers
+  String _annotatedTranscript = ""; // contains markers
   List<Map<String, dynamic>> _fluencyIssues = [];
   List<Map<String, dynamic>> _detectedFillers = []; // [{word, start_time}]
   final AnalysisStorageService _storageService = AnalysisStorageService();
 
   final String? _apiUrl = dotenv.env['FLUENCY_API_URL'];
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -104,20 +107,23 @@ class _FluencyScreenState extends State<FluencyScreen> {
       final annotatedText = data['annotated_transcript'] as String? ?? transcriptText;
       final issuesList = data['fluency_issues'] as List? ?? [];
       final fillersList = data['detected_fillers'] as List? ?? [];
+      final stuttersList = data['stutters'] as List? ?? [];
+      final pausesList = data['pauses'] as List? ?? [];
+      final fastPhrasList = data['fast_phrases'] as List? ?? [];
 
       final issues = issuesList.map((issue) {
         return {
-          'title': issue['title'] as String,
-          'errorText': issue['errorText'] as String,
-          'explanation': issue['explanation'] as String,
-          'suggestions': List<String>.from(issue['suggestions'] as List),
+          'title': issue['title'] as String? ?? 'ISSUE',
+          'errorText': issue['errorText'] as String? ?? '',
+          'explanation': issue['explanation'] as String? ?? '',
+          'suggestions': List<String>.from(issue['suggestions'] as List? ?? []),
         };
       }).toList();
 
       final fillers = fillersList.map((f) {
         return {
-          'word': f['word'] as String,
-          'start_time': (f['start_time'] as num).toDouble(),
+          'word': f['word'] as String? ?? '',
+          'start_time': (f['start_time'] as num?)?.toDouble() ?? 0.0,
         };
       }).toList().cast<Map<String, dynamic>>();
 
@@ -126,7 +132,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
       for (var issue in issues) {
         debugPrint("Issue detected: ${issue['title']} — ${issue['errorText']}");
       }
-      debugPrint("Detected fillers: ${fillers.map((f) => '${f['word']}@${f['start_time'].toStringAsFixed(1)}s').join(', ')}");
+      debugPrint("Detected fillers: ${fillers.length}, Stutters: ${stuttersList.length}, Fast Phrases: ${fastPhrasList.length}, Pauses: ${pausesList.length}");
 
       setState(() {
         _transcript = transcriptText;
@@ -142,21 +148,22 @@ class _FluencyScreenState extends State<FluencyScreen> {
       debugPrint("Stack trace: $stackTrace");
       setState(() {
         _transcript = "Error processing audio analysis.";
+        // Reset the issues list on error so we don't accidentally show 'Excellent Fluency'
+        _fluencyIssues = []; 
         _isLoading = false;
       });
     }
   }
 
-  // Build a RichText that highlights detected filler words in amber/orange,
-  // and displays detected long pauses as grey pills.
-  // Parses [F]...[/F] and [P]...[/P] markers from annotated_transcript.
+  // Build a RichText that highlights detected filler words, pauses, stutters, and fast phrases.
+  // Parses [F], [P-minor], [P-major], [S], and [FAST] markers from annotated_transcript.
   Widget _buildAnnotatedTranscript() {
     final text = _annotatedTranscript.isEmpty
         ? (_transcript.isEmpty ? "No speech detected." : _transcript)
         : _annotatedTranscript;
 
-    if (!text.contains('[F]') && !text.contains('[P]')) {
-      // No fillers or pauses — plain text
+    if (!text.contains('[F]') && !text.contains('[P-minor]') && !text.contains('[P-major]') && !text.contains('[S]') && !text.contains('[FAST]')) {
+      // No markers — plain text
       return Text(
         text.isEmpty ? "No speech detected." : text,
         style: const TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)),
@@ -165,65 +172,102 @@ class _FluencyScreenState extends State<FluencyScreen> {
 
     // Parse markers into RichText spans
     final spans = <InlineSpan>[];
-    // This regex matches either [F]content[/F] or [P]content[/P]
-    final marker = RegExp(r'\[(F|P)\](.*?)\[/\1\]');
+    
+    // We parse [FAST] tokens separately so they don't consume nested markers like [P-minor],
+    // while keeping [F]...[/F] block captures intact.
+    final marker = RegExp(r'\[(FAST)\]|\[(/FAST)\]|\[(F|P-minor|P-major|S)\](.*?)\[/\3\]');
+    
     int cursor = 0;
+    bool isFast = false;
+
+    TextStyle getTextStyle(bool fast) {
+      return TextStyle(
+        fontSize: 16, 
+        height: 1.6, 
+        color: fast ? const Color(0xFF1D4ED8) : const Color(0xFF1F2937),
+        backgroundColor: fast ? const Color(0xFFDBEAFE) : null,
+        fontWeight: fast ? FontWeight.w600 : FontWeight.normal,
+      );
+    }
 
     for (final match in marker.allMatches(text)) {
       // Text before this marker
       if (match.start > cursor) {
         spans.add(TextSpan(
           text: text.substring(cursor, match.start),
-          style: const TextStyle(
-            fontSize: 16, height: 1.6, color: Color(0xFF1F2937),
-          ),
+          style: getTextStyle(isFast),
         ));
       }
       
-      final tag = match.group(1);
-      final content = match.group(2) ?? '';
-      
-      if (tag == 'F') {
-        // The filler word itself — highlighted
-        spans.add(TextSpan(
-          text: content,
-          style: const TextStyle(
-            color: Color(0xFFD97706),       // amber-600
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-            height: 1.6,
-            backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
-          ),
-        ));
-      } else if (tag == 'P') {
-        // The pause marker - styled as a small chip inside the text
-        spans.add(WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade300),
+      final fullMatch = match.group(0)!;
+      if (fullMatch == '[FAST]') {
+        isFast = true;
+      } else if (fullMatch == '[/FAST]') {
+        isFast = false;
+      } else {
+        final tag = match.group(3);
+        final content = match.group(4) ?? '';
+        
+        if (tag == 'F') {
+          // Filler word — amber
+          spans.add(TextSpan(
+            text: content,
+            style: const TextStyle(
+              color: Color(0xFFD97706),       // amber-600
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+              height: 1.6,
+              backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.timer_outlined, size: 14, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Text(
-                  content,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.bold,
+          ));
+        } else if (tag == 'S') {
+          // Stuttered word — purple
+          spans.add(TextSpan(
+            text: content,
+            style: const TextStyle(
+              color: Color(0xFF7E22CE),       // purple-700
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+              height: 1.6,
+              backgroundColor: Color(0xFFF3E8FF), // purple-100 bg
+            ),
+          ));
+        } else if (tag == 'P-minor' || tag == 'P-major') {
+          // Pause marker - styled as a small chip inside the text
+          final isMajor = tag == 'P-major';
+          final bgColor = isMajor ? const Color(0xFFFEE2E2) : Colors.grey.shade200;
+          final borderColor = isMajor ? const Color(0xFFFCA5A5) : Colors.grey.shade300;
+          final textColor = isMajor ? const Color(0xFFDC2626) : Colors.grey.shade600;
+          final icon = isMajor ? Icons.warning_amber_rounded : Icons.timer_outlined;
+
+          spans.add(WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: borderColor),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 14, color: textColor),
+                  const SizedBox(width: 4),
+                  Text(
+                    content,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: textColor,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ));
+          ));
+        }
       }
       
       cursor = match.end;
@@ -233,9 +277,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
     if (cursor < text.length) {
       spans.add(TextSpan(
         text: text.substring(cursor),
-        style: const TextStyle(
-          fontSize: 16, height: 1.6, color: Color(0xFF1F2937),
-        ),
+        style: getTextStyle(isFast),
       ));
     }
 
@@ -260,6 +302,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -482,18 +525,21 @@ class _FluencyScreenState extends State<FluencyScreen> {
     IconData icon;
     Color accentColor;
 
-    if (title.contains("SPEED")) {
+    if (title.contains("SPEED") || title.contains("RUSHED")) {
       icon = Icons.speed_rounded;
       accentColor = const Color(0xFF3B82F6); // Blue
-    } else if (title.contains("PACING")) {
+    } else if (title.contains("PAUSE") || title.contains("HESITATION")) {
       icon = Icons.timer_off_outlined;
       accentColor = const Color(0xFFF59E0B); // Amber
+    } else if (title.contains("STUTTERING") || title.contains("REPETITION")) {
+      icon = Icons.loop_rounded;
+      accentColor = const Color(0xFF8B5CF6); // Purple
     } else if (title.contains("FILLER")) {
       icon = Icons.graphic_eq_rounded;
       accentColor = const Color(0xFFEF4444); // Red
     } else {
-      icon = Icons.loop_rounded;
-      accentColor = const Color(0xFF8B5CF6); // Purple
+      icon = Icons.info_outline_rounded;
+      accentColor = const Color(0xFF6B7280); // Gray
     }
 
     return Container(
@@ -584,6 +630,7 @@ class _FluencyScreenState extends State<FluencyScreen> {
             runSpacing: 8.0,
             children: suggestions.map((suggestion) {
               return Container(
+                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width - 80),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF3F4F6),
@@ -594,12 +641,14 @@ class _FluencyScreenState extends State<FluencyScreen> {
                   children: [
                     const Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 14),
                     const SizedBox(width: 6),
-                    Text(
-                      suggestion,
-                      style: const TextStyle(
-                          color: Color(0xFF374151),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600
+                    Flexible(
+                      child: Text(
+                        suggestion,
+                        style: const TextStyle(
+                            color: Color(0xFF374151),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600
+                        ),
                       ),
                     ),
                   ],

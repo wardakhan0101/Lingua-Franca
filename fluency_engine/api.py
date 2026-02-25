@@ -354,69 +354,96 @@ def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
 def build_annotated_transcript(
     all_words: List[Dict], 
     detected_fillers: List[Dict], 
-    pauses: List[Dict] = None
+    pauses: List[Dict] = None,
+    stutters: List[Dict] = None,
+    fast_phrases: List[Dict] = None
 ) -> str:
     """
     Reconstruct the transcript from Whisper word list.
-    Wraps detected fillers with [F]...[/F] markers using exact word indices.
-    Injects visible [P]...[/P] pause markers between words where a long gap occurred.
+    Injects visible markers for fillers ([F]), pauses ([P-minor], [P-major]),
+    stutters ([S]), and rushed phrases ([FAST]).
     """
-    if pauses is None:
-        pauses = []
+    if pauses is None: pauses = []
+    if stutters is None: stutters = []
+    if fast_phrases is None: fast_phrases = []
         
-    single_indices: Set[int] = set()
-    multi_starts: Dict[int, int] = {}  # first_index → span length
+    single_fillers: Set[int] = set()
+    multi_fillers: Dict[int, int] = {} 
 
     for f in detected_fillers:
         indices = f.get('word_indices', [])
         if not indices:
             continue
         if len(indices) > 1:
-            multi_starts[indices[0]] = len(indices)
+            multi_fillers[indices[0]] = len(indices)
         else:
-            single_indices.add(indices[0])
+            single_fillers.add(indices[0])
 
-    # Map: index_after_pause -> formatted pause string
+    stutter_indices: Set[int] = {s.get('word_index') for s in stutters}
+
     pause_markers: Dict[int, str] = {}
     for p in pauses:
         idx_after = p.get('next_word_index')
         gap = p.get('gap', 0)
-        pause_markers[idx_after] = f"[P]{gap:.1f}s pause[/P]"
+        tag = "P-minor" if gap <= 1.2 else "P-major"
+        pause_markers[idx_after] = f"[{tag}]{gap:.1f}s pause[/{tag}]"
+
+    fast_starts: Set[int] = {f.get('start_index') for f in fast_phrases}
+    fast_ends: Set[int] = {f.get('end_index') for f in fast_phrases}
 
     parts = []
     i = 0
     while i < len(all_words):
-        # Check if there is a pause right before this word
+        # 1. Fast phrase start BEFORE word
+        if i in fast_starts:
+            parts.append("[FAST]")
+
+        # 2. Pause marker BEFORE word
         if i in pause_markers:
             parts.append(pause_markers[i])
             
+        # 3. Word text
         word = all_words[i].get('word', '').strip()
 
-        if i in multi_starts:
-            span_len = multi_starts[i]
+        if i in multi_fillers:
+            span_len = multi_fillers[i]
             phrase_words = [
                 all_words[i + j].get('word', '').strip()
                 for j in range(min(span_len, len(all_words) - i))
             ]
             parts.append(f'[F]{" ".join(phrase_words)}[/F]')
+            # If a fast phrase ends inside a multi-word filler, safely close it
+            for j in range(span_len):
+                if (i + j) in fast_ends:
+                    parts.append("[/FAST]")
             i += span_len
             continue
 
-        if i in single_indices:
+        if i in single_fillers:
             parts.append(f'[F]{word}[/F]')
+        elif i in stutter_indices:
+            parts.append(f'[S]{word}[/S]')
         else:
             parts.append(word)
+            
+        # 4. Fast phrase end AFTER word
+        if i in fast_ends:
+            parts.append("[/FAST]")
+            
         i += 1
 
-    return ' '.join(parts)
+    # Cleanup any weird spacing around FAST tags
+    out = ' '.join(parts)
+    out = out.replace("[FAST] ", "[FAST]").replace(" [/FAST]", "[/FAST]")
+    return out
 
 
-def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict], List[Dict]]:
-    """Run all fluency checks. Returns (issues, detected_fillers, pauses)."""
+def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict], List[Dict], List[Dict], List[Dict]]:
+    """Run all fluency checks. Returns (issues, detected_fillers, pauses, stutters, fast_phrases)."""
     issues = []
 
     if not words:
-        return issues, [], []
+        return issues, [], [], [], []
 
     # 1. Filler Word Detection
     detected_fillers = detect_fillers(words, transcript)
@@ -441,34 +468,101 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
             ],
         })
 
-    # 2. Long Pause Detection (gap > 1.2s between consecutive words)
+    # 2. Pause Detection (gap > 0.5s between consecutive words)
     long_pauses = []
     for i in range(len(words) - 1):
         end_current = words[i].get("end", 0)
         start_next = words[i + 1].get("start", 0)
         gap = start_next - end_current
-        if gap > 1.2:
+        if gap > 0.5:
             long_pauses.append({
                 "gap": gap,
                 "previous_word_index": i,
                 "next_word_index": i + 1,
             })
 
-    if long_pauses:
-        avg_pause = sum(p["gap"] for p in long_pauses) / len(long_pauses)
+    minor_pauses = [p for p in long_pauses if p["gap"] <= 1.2]
+    major_pauses = [p for p in long_pauses if p["gap"] > 1.2]
+
+    if minor_pauses:
         issues.append({
-            "title": "PACING",
-            "errorText": f"{len(long_pauses)} unnatural pauses",
-            "explanation": f"Several gaps in speech were longer than 1.2 seconds "
-                           f"(avg: {avg_pause:.1f}s). This suggests hesitation or lack of preparation.",
+            "title": "MINOR HESITATIONS",
+            "errorText": f"{len(minor_pauses)} minor hesitations",
+            "explanation": "You had several short gaps (0.5s - 1.2s) in your speech. "
+                           "You're thinking a bit too long between phrases.",
             "suggestions": [
-                "Keep speaking rhythm consistent",
-                "Prepare your thoughts in advance",
-                "Practice transitions between ideas"
+                "Try to connect your words more smoothly",
+                "Practice your material to reduce recall time",
             ],
         })
 
-    # 3. Speaking Speed (WPM)
+    if major_pauses:
+        avg_pause = sum(p["gap"] for p in major_pauses) / len(major_pauses)
+        issues.append({
+            "title": "UNNATURAL PAUSES",
+            "errorText": f"{len(major_pauses)} long pauses",
+            "explanation": f"You had {len(major_pauses)} gaps longer than 1.2 seconds "
+                           f"(avg: {avg_pause:.1f}s). These gaps are long enough to lose the listener's attention.",
+            "suggestions": [
+                "Keep your speaking rhythm consistent",
+                "Prepare your transitions in advance",
+            ],
+        })
+
+    # 3. Stuttering / Word Restarts
+    stutters = []
+    last_word = ""
+    for i in range(len(words)):
+        w_curr = re.sub(r'[^\w]', '', words[i].get("word", "").lower())
+        if not w_curr:
+            continue
+            
+        if w_curr == last_word:
+            stutters.append({
+                "word": words[i].get("word", "").strip(),
+                "word_index": i,
+                "start_time": words[i].get("start", 0)
+            })
+        last_word = w_curr
+
+    if stutters:
+        stut_freq: Dict[str, int] = {}
+        for s in stutters:
+            w = s['word'].lower()
+            stut_freq[w] = stut_freq.get(w, 0) + 1
+        top_stutters = ", ".join(f"{k}" for k, _ in sorted(stut_freq.items(), key=lambda x: -x[1])[:3])
+        issues.append({
+            "title": "STUTTERING",
+            "errorText": f"{len(stutters)} repeated words",
+            "explanation": f"You repeated identical words back-to-back {len(stutters)} times (e.g., {top_stutters}). "
+                           "This breaks the flow of your sentence.",
+            "suggestions": [
+                "Take a deep breath before complex sentences",
+                "Don't rush—it's okay to speak slower to avoid stammering",
+            ],
+        })
+
+    # 4. Speaking Speed & Rushed Speech (WPM)
+    fast_phrases = []
+    chunk_boundaries = [0] + [p["next_word_index"] for p in long_pauses] + [len(words)]
+    for i in range(len(chunk_boundaries) - 1):
+        start_idx = chunk_boundaries[i]
+        end_idx = chunk_boundaries[i+1] - 1
+        if end_idx >= len(words):
+            end_idx = len(words) - 1
+            
+        if end_idx - start_idx >= 4: # At least 5 words to calculate a meaningful phrase WPM
+            duration = words[end_idx].get("end", 0) - words[start_idx].get("start", 0)
+            if duration > 0:
+                chunk_wpm = ((end_idx - start_idx + 1) / duration) * 60
+                if chunk_wpm > 180:
+                    fast_phrases.append({
+                        "wpm": chunk_wpm,
+                        "start_index": start_idx,
+                        "end_index": end_idx
+                    })
+
+    # Overall Speed Issue
     if len(words) > 5:
         duration = words[-1].get("end", 0) - words[0].get("start", 0)
         if duration > 0:
@@ -476,27 +570,38 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
             if wpm < 100:
                 issues.append({
                     "title": "SPEAKING SPEED",
-                    "errorText": f"Too slow ({wpm:.0f} WPM)",
-                    "explanation": "Your speaking pace is slower than the ideal 120–160 words per minute. "
+                    "errorText": f"Overall too slow ({wpm:.0f} WPM)",
+                    "explanation": "Your average speaking pace is slower than the ideal 120–160 words per minute. "
                                    "This may lose audience attention.",
                     "suggestions": [
                         "Practice speaking slightly faster",
                         "Reduce long pauses",
-                        "Be more confident with your material"
                     ],
                 })
             elif wpm > 180:
                 issues.append({
                     "title": "SPEAKING SPEED",
-                    "errorText": f"Too fast ({wpm:.0f} WPM)",
-                    "explanation": "Your speaking pace exceeds the ideal range. "
+                    "errorText": f"Overall too fast ({wpm:.0f} WPM)",
+                    "explanation": "Your average speaking pace exceeds the ideal range. "
                                    "Speaking too quickly can reduce clarity.",
                     "suggestions": [
                         "Slow down and enunciate",
                         "Take deliberate pauses",
-                        "Focus on clarity over speed"
                     ],
                 })
+
+    # Phrase-level Speed Issues
+    if fast_phrases:
+        issues.append({
+            "title": "RUSHED SPEECH",
+            "errorText": f"{len(fast_phrases)} phrases spoken too fast",
+            "explanation": "Even if your overall average speed is fine, you rushed through certain sentences "
+                           "at >180 WPM. This makes specific parts hard for listeners to catch.",
+            "suggestions": [
+                "Maintain a consistent pace",
+                "Use pauses to pace your breath",
+            ],
+        })
 
     # 4. Word Repetition (content words used > 3 times, excluding all fillers)
     all_fillers = HARD_FILLERS | SOFT_FILLERS
@@ -520,7 +625,7 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
             ],
         })
 
-    return issues, detected_fillers, long_pauses
+    return issues, detected_fillers, long_pauses, stutters, fast_phrases
 
 
 @app.post("/analyze")
@@ -558,8 +663,14 @@ async def analyze_audio(file: UploadFile = File(...)):
                     })
 
         transcript = result.get("text", "").strip()
-        fluency_issues, detected_fillers, long_pauses = analyze_fluency(all_words, transcript)
-        annotated_transcript = build_annotated_transcript(all_words, detected_fillers, long_pauses)
+        fluency_issues, detected_fillers, long_pauses, stutters, fast_phrases = analyze_fluency(all_words, transcript)
+        annotated_transcript = build_annotated_transcript(
+            all_words=all_words, 
+            detected_fillers=detected_fillers, 
+            pauses=long_pauses,
+            stutters=stutters,
+            fast_phrases=fast_phrases
+        )
 
         return {
             "transcript": transcript,
@@ -567,6 +678,8 @@ async def analyze_audio(file: UploadFile = File(...)):
             "fluency_issues": fluency_issues,
             "detected_fillers": detected_fillers,
             "pauses": long_pauses,
+            "stutters": stutters,
+            "fast_phrases": fast_phrases,
             "word_count": len(all_words),
         }
 
