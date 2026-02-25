@@ -116,7 +116,15 @@ Returns `{"status": "ok", "model": "whisper-base"}` — use this to verify the s
 
 ```bash
 # From fluency_engine/ directory
-gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/fluency-engine/api
+
+# 1. Build and push image WITH layer caching
+# This uses the previously built image as a cache source, saving ~5-10 minutes
+# on the torch, ffmpeg, Whisper, and spaCy layers.
+gcloud builds submit \
+  --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/fluency-engine/api \
+  --cache-from us-central1-docker.pkg.dev/YOUR_PROJECT_ID/fluency-engine/api:latest
+
+# 2. Deploy the new image to Cloud Run
 gcloud run deploy fluency-engine \
   --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/fluency-engine/api \
   --region us-central1
