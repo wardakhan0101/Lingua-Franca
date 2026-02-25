@@ -351,11 +351,19 @@ def detect_fillers(words: List[Dict], transcript: str) -> List[Dict]:
     return detected
 
 
-def build_annotated_transcript(all_words: List[Dict], detected_fillers: List[Dict]) -> str:
+def build_annotated_transcript(
+    all_words: List[Dict], 
+    detected_fillers: List[Dict], 
+    pauses: List[Dict] = None
+) -> str:
     """
-    Reconstruct the transcript from Whisper word list, wrapping detected filler
-    instances with [F]...[/F] markers using exact word indices.
+    Reconstruct the transcript from Whisper word list.
+    Wraps detected fillers with [F]...[/F] markers using exact word indices.
+    Injects visible [P]...[/P] pause markers between words where a long gap occurred.
     """
+    if pauses is None:
+        pauses = []
+        
     single_indices: Set[int] = set()
     multi_starts: Dict[int, int] = {}  # first_index → span length
 
@@ -368,9 +376,20 @@ def build_annotated_transcript(all_words: List[Dict], detected_fillers: List[Dic
         else:
             single_indices.add(indices[0])
 
+    # Map: index_after_pause -> formatted pause string
+    pause_markers: Dict[int, str] = {}
+    for p in pauses:
+        idx_after = p.get('next_word_index')
+        gap = p.get('gap', 0)
+        pause_markers[idx_after] = f"[P]{gap:.1f}s pause[/P]"
+
     parts = []
     i = 0
     while i < len(all_words):
+        # Check if there is a pause right before this word
+        if i in pause_markers:
+            parts.append(pause_markers[i])
+            
         word = all_words[i].get('word', '').strip()
 
         if i in multi_starts:
@@ -392,12 +411,12 @@ def build_annotated_transcript(all_words: List[Dict], detected_fillers: List[Dic
     return ' '.join(parts)
 
 
-def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict]]:
-    """Run all fluency checks. Returns (issues, detected_fillers)."""
+def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict], List[Dict]]:
+    """Run all fluency checks. Returns (issues, detected_fillers, pauses)."""
     issues = []
 
     if not words:
-        return issues, []
+        return issues, [], []
 
     # 1. Filler Word Detection
     detected_fillers = detect_fillers(words, transcript)
@@ -429,10 +448,14 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
         start_next = words[i + 1].get("start", 0)
         gap = start_next - end_current
         if gap > 1.2:
-            long_pauses.append(gap)
+            long_pauses.append({
+                "gap": gap,
+                "previous_word_index": i,
+                "next_word_index": i + 1,
+            })
 
     if long_pauses:
-        avg_pause = sum(long_pauses) / len(long_pauses)
+        avg_pause = sum(p["gap"] for p in long_pauses) / len(long_pauses)
         issues.append({
             "title": "PACING",
             "errorText": f"{len(long_pauses)} unnatural pauses",
@@ -497,7 +520,7 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
             ],
         })
 
-    return issues, detected_fillers
+    return issues, detected_fillers, long_pauses
 
 
 @app.post("/analyze")
@@ -535,14 +558,15 @@ async def analyze_audio(file: UploadFile = File(...)):
                     })
 
         transcript = result.get("text", "").strip()
-        fluency_issues, detected_fillers = analyze_fluency(all_words, transcript)
-        annotated_transcript = build_annotated_transcript(all_words, detected_fillers)
+        fluency_issues, detected_fillers, long_pauses = analyze_fluency(all_words, transcript)
+        annotated_transcript = build_annotated_transcript(all_words, detected_fillers, long_pauses)
 
         return {
             "transcript": transcript,
             "annotated_transcript": annotated_transcript,
             "fluency_issues": fluency_issues,
             "detected_fillers": detected_fillers,
+            "pauses": long_pauses,
             "word_count": len(all_words),
         }
 

@@ -147,30 +147,30 @@ class _FluencyScreenState extends State<FluencyScreen> {
     }
   }
 
-  // Build a RichText that highlights detected filler words in amber/orange.
-  // Parses [F]...[/F] markers from annotated_transcript returned by the API.
-  // Each [F]word[/F] instance is EXACTLY the filler detected by spaCy —
-  // so two occurrences of 'like' where only one is a filler will highlight only that one.
+  // Build a RichText that highlights detected filler words in amber/orange,
+  // and displays detected long pauses as grey pills.
+  // Parses [F]...[/F] and [P]...[/P] markers from annotated_transcript.
   Widget _buildAnnotatedTranscript() {
     final text = _annotatedTranscript.isEmpty
         ? (_transcript.isEmpty ? "No speech detected." : _transcript)
         : _annotatedTranscript;
 
-    if (!text.contains('[F]')) {
-      // No fillers — plain text
+    if (!text.contains('[F]') && !text.contains('[P]')) {
+      // No fillers or pauses — plain text
       return Text(
         text.isEmpty ? "No speech detected." : text,
         style: const TextStyle(fontSize: 16, height: 1.6, color: Color(0xFF1F2937)),
       );
     }
 
-    // Parse [F]word[/F] markers into RichText spans
-    final spans = <TextSpan>[];
-    final marker = RegExp(r'\[F\](.*?)\[/F\]');
+    // Parse markers into RichText spans
+    final spans = <InlineSpan>[];
+    // This regex matches either [F]content[/F] or [P]content[/P]
+    final marker = RegExp(r'\[(F|P)\](.*?)\[/\1\]');
     int cursor = 0;
 
     for (final match in marker.allMatches(text)) {
-      // Text before this filler marker
+      // Text before this marker
       if (match.start > cursor) {
         spans.add(TextSpan(
           text: text.substring(cursor, match.start),
@@ -179,17 +179,53 @@ class _FluencyScreenState extends State<FluencyScreen> {
           ),
         ));
       }
-      // The filler word itself — highlighted
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: const TextStyle(
-          color: Color(0xFFD97706),       // amber-600
-          fontWeight: FontWeight.w700,
-          fontSize: 16,
-          height: 1.6,
-          backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
-        ),
-      ));
+      
+      final tag = match.group(1);
+      final content = match.group(2) ?? '';
+      
+      if (tag == 'F') {
+        // The filler word itself — highlighted
+        spans.add(TextSpan(
+          text: content,
+          style: const TextStyle(
+            color: Color(0xFFD97706),       // amber-600
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+            height: 1.6,
+            backgroundColor: Color(0xFFFEF3C7), // amber-100 bg
+          ),
+        ));
+      } else if (tag == 'P') {
+        // The pause marker - styled as a small chip inside the text
+        spans.add(WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.timer_outlined, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 4),
+                Text(
+                  content,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ));
+      }
+      
       cursor = match.end;
     }
 
