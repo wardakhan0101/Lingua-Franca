@@ -1,31 +1,24 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
-import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
-
-import '../services/analysis_storage_service.dart';
+import 'package:flutter/material.dart';import '../services/analysis_storage_service.dart';
 
 class FluencyScreen extends StatefulWidget {
+  final Map<String, dynamic> fluencyData;
   final String audioPath; // Path to the recorded user audio
 
-  const FluencyScreen({super.key, required this.audioPath});
+  const FluencyScreen({super.key, required this.fluencyData, required this.audioPath});
 
   @override
   State<FluencyScreen> createState() => _FluencyScreenState();
 }
 
 class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveClientMixin<FluencyScreen> {
-  bool _isLoading = true;
   String _transcript = "";
   String _annotatedTranscript = ""; // contains markers
   List<Map<String, dynamic>> _fluencyIssues = [];
   List<Map<String, dynamic>> _detectedFillers = []; // [{word, start_time}]
   final AnalysisStorageService _storageService = AnalysisStorageService();
-
-  final String? _apiUrl = dotenv.env['FLUENCY_API_URL'];
 
   @override
   bool get wantKeepAlive => true;
@@ -35,74 +28,12 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
     super.initState();
     debugPrint("=== FLUENCY SCREEN INITIALIZED ===");
     debugPrint("Audio path received: ${widget.audioPath}");
-    _analyzeFluency();
+    _processFluencyData();
   }
 
-  Future<void> _analyzeFluency() async {
-    debugPrint("=== STARTING FLUENCY ANALYSIS ===");
-
-    if (_apiUrl == null || _apiUrl!.isEmpty) {
-      setState(() {
-        _transcript = "Error: FLUENCY_API_URL is not set in .env";
-        _isLoading = false;
-      });
-      return;
-    }
-
-    final url = Uri.parse('$_apiUrl/analyze');
-
+  void _processFluencyData() {
     try {
-      final audioFile = File(widget.audioPath);
-      final exists = await audioFile.exists();
-      debugPrint("File exists: $exists");
-
-      if (!exists) {
-        throw Exception("Audio file not found at: ${widget.audioPath}");
-      }
-
-      final audioBytes = await audioFile.readAsBytes();
-      debugPrint("Audio file size: ${audioBytes.length} bytes");
-
-      if (audioBytes.length <= 44) {
-        throw Exception("Audio file is empty or invalid (only ${audioBytes.length} bytes)");
-      }
-
-      // Send as multipart/form-data to our Python API
-      debugPrint("Sending request to Fluency Engine API...");
-      final request = http.MultipartRequest('POST', url);
-      request.files.add(http.MultipartFile.fromBytes(
-        'file',
-        audioBytes,
-        filename: 'recording.wav',
-        contentType: MediaType('audio', 'wav'),
-      ));
-
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-
-      debugPrint("Fluency API response status: ${response.statusCode}");
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        debugPrint("Fluency API response received");
-        _processApiResponse(data);
-      } else {
-        debugPrint("Fluency API error: ${response.body}");
-        throw Exception('Failed to analyze audio: ${response.statusCode} - ${response.body}');
-      }
-    } catch (e, stackTrace) {
-      debugPrint("=== ERROR IN FLUENCY ANALYSIS ===");
-      debugPrint("Error: $e");
-      debugPrint("Stack trace: $stackTrace");
-      setState(() {
-        _transcript = "Error analyzing audio: $e\n\nPlease try again.";
-        _isLoading = false;
-      });
-    }
-  }
-
-  void _processApiResponse(Map<String, dynamic> data) {
-    try {
+      final data = widget.fluencyData;
       final transcriptText = data['transcript'] as String? ?? '';
       final annotatedText = data['annotated_transcript'] as String? ?? transcriptText;
       final issuesList = data['fluency_issues'] as List? ?? [];
@@ -139,7 +70,6 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
         _annotatedTranscript = annotatedText;
         _fluencyIssues = issues;
         _detectedFillers = fillers;
-        _isLoading = false;
       });
 
       _storeAnalysisResults();
@@ -150,7 +80,6 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
         _transcript = "Error processing audio analysis.";
         // Reset the issues list on error so we don't accidentally show 'Excellent Fluency'
         _fluencyIssues = []; 
-        _isLoading = false;
       });
     }
   }
@@ -304,80 +233,24 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFFF5F7FB),
+      extendBodyBehindAppBar: false,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: Container(
-          margin: const EdgeInsets.only(left: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.2),
-            shape: BoxShape.circle,
-          ),
-          child: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ),
         title: const Text(
           'Fluency Report',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+        automaticallyImplyLeading: false, // UnifiedReportScreen handles the back button
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          // Lingua Franca Theme Gradient
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF4FACFE), // Login Light Blue
-              Color(0xFF8A4FFF), // Login Purple
-            ],
-          ),
-        ),
-        child: Stack(
-          children: [
-            // Decorative Background Circle
-            Positioned(
-              top: -100,
-              right: -50,
-              child: Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.1),
-                ),
-              ),
-            ),
-
-            // Content
-            SafeArea(
-              child: _isLoading
-                  ? Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(color: Color(0xFF8A4FFF)),
-                      SizedBox(height: 16),
-                      Text("Analyzing Fluency...", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF8A4FFF))),
-                    ],
-                  ),
-                ),
-              )
-                  : SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-                physics: const BouncingScrollPhysics(),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // 1. Transcript Section
                     Container(
@@ -442,20 +315,20 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                           style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Colors.white
+                              color: Colors.black87
                           ),
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
+                            color: const Color(0xFF6C63FF).withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
+                            border: Border.all(color: const Color(0xFF6C63FF).withValues(alpha: 0.2)),
                           ),
                           child: Text(
                             "${_fluencyIssues.length} Found",
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: Color(0xFF6C63FF),
                               fontWeight: FontWeight.bold,
                               fontSize: 12,
                             ),
@@ -507,10 +380,6 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                     const SizedBox(height: 40),
                   ],
                 ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

@@ -9,6 +9,7 @@ import 'package:deepgram_speech_to_text/deepgram_speech_to_text.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/grammar_api_service.dart';
+import '../services/fluency_api_service.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
 
@@ -358,7 +359,13 @@ class _SttTestState extends State<SttTest> with TickerProviderStateMixin {
     setState(() => _isAnalyzing = true);
 
     try {
-      final grammarResult = await GrammarApiService.analyzeText(textToAnalyze);
+      final results = await Future.wait([
+        GrammarApiService.analyzeText(textToAnalyze),
+        FluencyApiService.analyzeAudio(pathToUse),
+      ]);
+
+      final grammarResult = results[0] as GrammarAnalysisResult;
+      final fluencyResult = results[1] as Map<String, dynamic>;
 
       if (mounted) {
         Navigator.push(
@@ -366,6 +373,7 @@ class _SttTestState extends State<SttTest> with TickerProviderStateMixin {
           MaterialPageRoute(
             builder: (context) => UnifiedReportScreen(
               grammarResult: grammarResult,
+              fluencyResult: fluencyResult,
               audioPath: pathToUse,
             ),
           ),
@@ -835,11 +843,13 @@ class TimerPainter extends CustomPainter {
 
 class UnifiedReportScreen extends StatelessWidget {
   final GrammarAnalysisResult grammarResult;
+  final Map<String, dynamic> fluencyResult;
   final String audioPath;
 
   const UnifiedReportScreen({
     super.key,
     required this.grammarResult,
+    required this.fluencyResult,
     required this.audioPath,
   });
 
@@ -872,7 +882,7 @@ class UnifiedReportScreen extends StatelessWidget {
         body: TabBarView(
           children: [
             GrammarReportScreen(result: grammarResult),
-            FluencyScreen(audioPath: audioPath),
+            FluencyScreen(fluencyData: fluencyResult, audioPath: audioPath),
           ],
         ),
       ),

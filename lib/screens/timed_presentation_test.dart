@@ -87,7 +87,7 @@ class _PresentationPracticeScreenState extends State<PresentationPracticeScreen>
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => FluencyScreen(audioPath: path!), // Added '!' here
+          builder: (context) => FluencyScreen(audioPath: path!, fluencyData: const {}), // Added '!' and mock data here
         ),
       );
     } else {
