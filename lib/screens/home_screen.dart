@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:lingua_franca/screens/chat_screen.dart';
 import 'package:lingua_franca/screens/developers_screen.dart';
 import 'package:lingua_franca/screens/profile_screen.dart';
-import 'package:lingua_franca/screens/timed_presentation_screen.dart';
-import 'package:lingua_franca/screens/timed_presentation_test.dart';
+import 'package:lingua_franca/screens/dg_stt_test.dart';
 
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
@@ -130,7 +128,7 @@ class HomeScreen extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: () {
                       Navigator.of(context).push(
-                        MaterialPageRoute(builder: (context) => const SttTest()),
+                        MaterialPageRoute(builder: (context) => const DgSttTest()),
                       );
                     },
                     style: ElevatedButton.styleFrom(
@@ -580,7 +578,7 @@ class HomeScreen extends StatelessWidget {
           if (index == 1){
             Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (context) => const SttTest(),
+                builder: (context) => const DgSttTest(),
               ),
             );
           }

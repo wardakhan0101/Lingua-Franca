@@ -6,14 +6,14 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'timed_presentation_test.dart';
 import 'homophone_corrector.dart';
 
-class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+class ChatScreenTest extends StatefulWidget {
+  const ChatScreenTest({super.key});
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  State<ChatScreenTest> createState() => _ChatScreenTestState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenTestState extends State<ChatScreenTest> {
   final List<ChatMessage> _messages = [];
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();

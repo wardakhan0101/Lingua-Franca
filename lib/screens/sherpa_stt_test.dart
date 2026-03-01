@@ -3,14 +3,14 @@ import '../services/stt_service.dart';
 import '../services/audio_recorder_service.dart';
 import 'dart:async';
 
-class SpeechRecognitionScreen extends StatefulWidget {
-  const SpeechRecognitionScreen({Key? key}) : super(key: key);
+class SherpaSttTest extends StatefulWidget {
+  const SherpaSttTest({Key? key}) : super(key: key);
 
   @override
-  State<SpeechRecognitionScreen> createState() => _SpeechRecognitionScreenState();
+  State<SherpaSttTest> createState() => _SherpaSttTestState();
 }
 
-class _SpeechRecognitionScreenState extends State<SpeechRecognitionScreen> {
+class _SherpaSttTestState extends State<SherpaSttTest> {
   final STTServiceMinimal _sttService = STTServiceMinimal();
   final AudioRecorderService _audioService = AudioRecorderService();
 

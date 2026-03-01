@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:ui'; // Needed for ImageFilter
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -15,14 +14,14 @@ import 'fluency_screen.dart';
 
 final stt = dotenv.env['STT'];
 
-class SttTest extends StatefulWidget {
-  const SttTest({super.key});
+class DgSttTest extends StatefulWidget {
+  const DgSttTest({super.key});
 
   @override
-  State<SttTest> createState() => _SttTestState();
+  State<DgSttTest> createState() => _DgSttTestState();
 }
 
-class _SttTestState extends State<SttTest> with TickerProviderStateMixin {
+class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
   final AudioRecorder _recorder = AudioRecorder();
   Deepgram? _deepgram;
   DeepgramLiveListener? _liveListener;

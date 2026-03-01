@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:lingua_franca/screens/homophone_corrector.dart';
 
-class NativeSttScreen extends StatefulWidget {
-  const NativeSttScreen({super.key});
+class NativeSttScreenTest extends StatefulWidget {
+  const NativeSttScreenTest({super.key});
 
   @override
-  State<NativeSttScreen> createState() => _NativeSttScreenState();
+  State<NativeSttScreenTest> createState() => _NativeSttScreenTestState();
 }
 
-class _NativeSttScreenState extends State<NativeSttScreen> {
+class _NativeSttScreenTestState extends State<NativeSttScreenTest> {
   late stt.SpeechToText _speech;
   bool _isListening = false;
   bool _isInitialized = false;

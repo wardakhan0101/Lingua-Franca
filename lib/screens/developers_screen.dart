@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:lingua_franca/screens/fluency_screen.dart';
-import 'package:lingua_franca/screens/model_chatbot_screen.dart';
-import 'package:lingua_franca/screens/speech_recognition_screen.dart';
-import 'package:lingua_franca/screens/timed_presentation_screen.dart';
+
+import 'package:lingua_franca/screens/sherpa_stt_test.dart';
+import 'package:lingua_franca/screens/dg_stt_test.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
-import 'package:lingua_franca/screens/native_stt_screen.dart';
+import 'package:lingua_franca/screens/native_stt_screen_test.dart';
 
-import 'chat_screen.dart';
+import 'chat_screen_test.dart';
 
 class DevelopersScreen extends StatelessWidget {
   const DevelopersScreen({super.key});
@@ -64,7 +63,7 @@ class DevelopersScreen extends StatelessWidget {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (context) => const ChatScreen(),
+                            builder: (context) => const ChatScreenTest(),
                           ),
                         );
                       },
@@ -88,7 +87,7 @@ class DevelopersScreen extends StatelessWidget {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (context) => const NativeSttScreen(),
+                            builder: (context) => const NativeSttScreenTest(),
                           ),
                         );
                       },
@@ -119,8 +118,7 @@ class DevelopersScreen extends StatelessWidget {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (context) =>
-                                const SpeechRecognitionScreen(),
+                            builder: (context) => const SherpaSttTest(),
                           ),
                         );
                       },
@@ -149,8 +147,7 @@ class DevelopersScreen extends StatelessWidget {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (context) =>
-                            const SttTest(),
+                            builder: (context) => const DgSttTest(),
                           ),
                         );
                       },
@@ -171,27 +168,7 @@ class DevelopersScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // SizedBox(
-                  //   width: double.infinity,
-                  //   height: 56,
-                  //   child: ElevatedButton(
-                  //     onPressed: () {
-                  //       Navigator.of(context).push(
-                  //         MaterialPageRoute(
-                  //           builder: (context) => const FluencyScreen(),
-                  //         ),
-                  //       );
-                  //     },
-                  //     style: ElevatedButton.styleFrom(
-                  //       backgroundColor: Colors.white,
-                  //       foregroundColor: const Color(0xFF6B72AB),
-                  //       shape: RoundedRectangleBorder(
-                  //         borderRadius: BorderRadius.circular(12),
-                  //       ),
-                  //     ),
-                  //     child: const Text('Test Fluency Screen'),
-                  //   ),
-                  // ),
+
                   const SizedBox(height: 16),
 
                   const Spacer(),
