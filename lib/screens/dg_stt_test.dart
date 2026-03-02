@@ -358,10 +358,39 @@ class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
     setState(() => _isAnalyzing = true);
 
     try {
-      final results = await Future.wait([
-        GrammarApiService.analyzeText(textToAnalyze),
-        FluencyApiService.analyzeAudio(pathToUse),
-      ]);
+      // 1. Fire both requests but catch errors independently so one failure doesn't crash the other
+      final grammarFuture = GrammarApiService.analyzeText(textToAnalyze).catchError((e) {
+        debugPrint("Grammar API Error gracefully caught: $e");
+        return GrammarAnalysisResult(
+          originalText: textToAnalyze,
+          correctedText: "Grammar API is currently offline. Please try again later.",
+          mistakes: [],
+          summary: GrammarSummary(totalMistakes: 0, wordCount: 0, sentenceCount: 0, grammarScore: 0),
+          mistakeCategories: {},
+          message: e.toString(),
+        );
+      });
+
+      final fluencyFuture = FluencyApiService.analyzeAudio(pathToUse).catchError((e) {
+        debugPrint("Fluency API Error gracefully caught: $e");
+        return {
+          "transcript": "Fluency API is currently offline or errored out.",
+          "annotated_transcript": "Fluency API is currently offline or errored out.",
+          "fluency_issues": [{
+            "title": "API ERROR",
+            "errorText": "Service Unavailable",
+            "explanation": "The fluency analysis engine failed to respond. $e",
+            "suggestions": ["Try again later"]
+          }],
+          "detected_fillers": [],
+          "stutters": [],
+          "pauses": [],
+          "fast_phrases": []
+        };
+      });
+
+      // 2. Await both (neither will throw now due to catchError)
+      final results = await Future.wait([grammarFuture, fluencyFuture]);
 
       final grammarResult = results[0] as GrammarAnalysisResult;
       final fluencyResult = results[1] as Map<String, dynamic>;
@@ -378,8 +407,10 @@ class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
           ),
         );
       }
-    } catch (e) {
-      if (mounted) _showErrorSnackBar('Error analyzing text: $e');
+    } catch (e, stackTrace) {
+      debugPrint('==== UNEXPECTED ERROR IN GENERATE COMBINED REPORT ====');
+      debugPrint(e.toString());
+      if (mounted) _showErrorSnackBar('Fatal UI Error: $e');
     } finally {
       if (mounted) setState(() => _isAnalyzing = false);
     }

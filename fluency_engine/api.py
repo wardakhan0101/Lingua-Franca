@@ -468,8 +468,10 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
             ],
         })
 
-    # 2. Pause Detection (gap > 0.5s between consecutive words)
+    # 2. Pause Detection (gap > 0.5s between consecutive words, or word stretched > 0.8s)
     long_pauses = []
+    
+    # Check for actual silent gaps
     for i in range(len(words) - 1):
         end_current = words[i].get("end", 0)
         start_next = words[i + 1].get("start", 0)
@@ -479,6 +481,19 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
                 "gap": gap,
                 "previous_word_index": i,
                 "next_word_index": i + 1,
+            })
+            
+    # Check for stretched words (Whisper VAD squashing silence into word bounds)
+    for i, word_data in enumerate(words):
+        duration = word_data.get("end", 0) - word_data.get("start", 0)
+        if duration > 0.8:
+            # Approximate the hesitation by subtracting an average word length (~0.3s)
+            long_pauses.append({
+                "gap": duration - 0.3,
+                "word_index": i,
+                "previous_word_index": i,
+                "next_word_index": i + 1,
+                "type": "stretched"
             })
 
     minor_pauses = [p for p in long_pauses if p["gap"] <= 1.2]
