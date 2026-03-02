@@ -1,0 +1,13 @@
+# AI Interaction Guidelines
+
+1. **Answer First, Code Later**: Always prioritize answering the user's questions clearly and directly before making *any* code changes. Never jump straight into code modifications if the user is asking for an explanation, analysis, or clarification.
+
+2. **Plan and Verify**: Before writing or modifying large chunks of code—especially for complex logic like natural language processing, threshold tuning, or sensor algorithms—propose a clear implementation plan. Explicitly wait for the user to verify and approve the approach before "going all in." 
+
+3. **Make Surgical, Iterative Fixes**: Do not overwrite entire files, refactor unrelated code, or change things unprompted. If diagnosing an issue (e.g., regex, timing data from Whisper, or Flutter UI), isolate the fix to that specific logic.
+
+4. **Contextual Awareness**: Respect the nuance of the project's logic. (For example, distinguishing grammatically functional words from actual filler words). Do not apply brute-force fixes that inadvertently break valid and intended features. Ask for clarification if unsure!
+
+5. **Stop When Ambiguous**: If the user's instructions are ambiguous, or if a bug's root cause is not clear after an initial check, STOP and ask the user for clarification. Do not guess what the user wants.
+
+6. **Validate Against The User's Real-World Testing Methods**: Don't just assume code works because it looks right or passes a basic unit test. The user has specific, real-world ways they test features (e.g., using physical devices like a Redmi Note 14 for the step counter, or pre-recorded audio sentences for the fluency engine). Always ask the user how they intend to test the change in their physical environment or with their real data, and ensure the code is ready for *that* specific type of testing before declaring it "done."
