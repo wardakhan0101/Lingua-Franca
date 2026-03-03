@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class GrammarApiService {
   // 🌐 Your deployed Cloud Run API
-  static const String baseUrl = 'https://grammar-checker-114833434310.us-central1.run.app';
+  static const String baseUrl = 'https://grammar-checker-702584631438.us-central1.run.app';
 
   /// Analyze text for grammar mistakes
   static Future<GrammarAnalysisResult> analyzeText(String text) async {
