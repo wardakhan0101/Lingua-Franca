@@ -71,7 +71,7 @@ class _ChatScreenTestState extends State<ChatScreenTest> {
   }
 
   void _initializeChat() {
-    final apiKey = dotenv.env['GROQ_API_KEY'];
+    final apiKey = dotenv.env['AI'];
     if (apiKey == null || apiKey.isEmpty) return;
 
     setState(() {
