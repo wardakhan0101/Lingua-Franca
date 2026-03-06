@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:lingua_franca/screens/sherpa_stt_test.dart';
-import 'package:lingua_franca/screens/dg_stt_test.dart';
+import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
 import 'package:lingua_franca/screens/native_stt_screen_test.dart';
@@ -147,7 +147,7 @@ class DevelopersScreen extends StatelessWidget {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (context) => const DgSttTest(),
+                            builder: (context) => const TimedPresentationScreen(),
                           ),
                         );
                       },

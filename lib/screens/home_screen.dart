@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:lingua_franca/screens/developers_screen.dart';
 import 'package:lingua_franca/screens/profile_screen.dart';
-import 'package:lingua_franca/screens/dg_stt_test.dart';
+import 'package:lingua_franca/screens/timed_presentation_screen.dart';
+import '../models/scenario.dart';
+import 'scenario_chat_screen.dart';
 
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
@@ -126,11 +128,7 @@ class HomeScreen extends StatelessWidget {
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (context) => const DgSttTest()),
-                      );
-                    },
+                    onPressed: () => _showScenarioSelection(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryPurple,
                       foregroundColor: Colors.white,
@@ -551,6 +549,209 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // --- SCENARIO SELECTION BOTTOM SHEET ---
+  void _showScenarioSelection(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              "Select Practice Mode",
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF101828),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "Choose a scenario to practice your speaking skills.",
+              style: TextStyle(fontSize: 14, color: Color(0xFF667085)),
+            ),
+            const SizedBox(height: 24),
+            
+            // 1. Timed Presentation
+            _buildScenarioOption(
+              context: context,
+              icon: Icons.timer_outlined,
+              title: "Timed Presentation",
+              subtitle: "Speak freely on any topic with a timer",
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (context) => const TimedPresentationScreen()),
+                );
+              },
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // 2. Ordering Fast Food (MVP)
+            _buildScenarioOption(
+              context: context,
+              icon: Icons.fastfood_outlined,
+              title: "Ordering Fast Food",
+              subtitle: "Practice ordering food at a drive-thru",
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (context) => ScenarioChatScreen(
+                    scenario: const Scenario(
+                      id: "fast_food_1",
+                      title: "Ordering Fast Food",
+                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses short, conversational, and authentic to a fast-food drive-thru or counter experience. Do not offer more than 2-3 sentences per turn. Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them.",
+                      initialGreeting: "Hi there! Welcome to Burger Haven. What can I get for you today?",
+                    ),
+                  )),
+                );
+              },
+            ),
+
+            const SizedBox(height: 12),
+            
+            // 3. Job Interview (Locked)
+            _buildScenarioOption(
+              context: context,
+              icon: Icons.work_outline,
+              title: "Job Interview",
+              subtitle: "Professional mock interview practice",
+              isLocked: true,
+            ),
+
+            const SizedBox(height: 12),
+
+            // 4. Travel & Hotel (Locked)
+            _buildScenarioOption(
+              context: context,
+              icon: Icons.flight_takeoff_outlined,
+              title: "Travel & Hotel",
+              subtitle: "Practice checking in and navigating travel",
+              isLocked: true,
+            ),
+            
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScenarioOption({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    bool isLocked = false,
+    bool isNew = false,
+    VoidCallback? onTap,
+  }) {
+    final Color primaryPurple = const Color(0xFF8A48F0);
+    
+    return InkWell(
+      onTap: isLocked ? null : onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isLocked ? Colors.grey.shade50 : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isLocked ? Colors.grey.shade200 : Colors.grey.shade300),
+          boxShadow: isLocked ? [] : [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isLocked ? Colors.grey.shade200 : primaryPurple.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                color: isLocked ? Colors.grey.shade400 : primaryPurple,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: isLocked ? Colors.grey.shade500 : const Color(0xFF101828),
+                        ),
+                      ),
+                      if (isNew) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            "NEW",
+                            style: TextStyle(
+                              color: Colors.green.shade700,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isLocked ? Colors.grey.shade400 : const Color(0xFF667085),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isLocked)
+              Icon(Icons.lock_outline, color: Colors.grey.shade400, size: 20)
+            else
+              Icon(Icons.arrow_forward_ios, color: Colors.grey.shade400, size: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
   // --- BOTTOM NAV BAR ---
   Widget _buildBottomNavBar(BuildContext context, Color primary) {
     return Container(
@@ -578,7 +779,7 @@ class HomeScreen extends StatelessWidget {
           if (index == 1){
             Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (context) => const DgSttTest(),
+                builder: (context) => const TimedPresentationScreen(),
               ),
             );
           }

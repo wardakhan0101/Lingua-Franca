@@ -14,14 +14,14 @@ import 'fluency_screen.dart';
 
 final stt = dotenv.env['STT'];
 
-class DgSttTest extends StatefulWidget {
-  const DgSttTest({super.key});
+class TimedPresentationScreen extends StatefulWidget {
+  const TimedPresentationScreen({super.key});
 
   @override
-  State<DgSttTest> createState() => _DgSttTestState();
+  State<TimedPresentationScreen> createState() => _TimedPresentationScreenState();
 }
 
-class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
+class _TimedPresentationScreenState extends State<TimedPresentationScreen> with TickerProviderStateMixin {
   final AudioRecorder _recorder = AudioRecorder();
   Deepgram? _deepgram;
   DeepgramLiveListener? _liveListener;
@@ -440,47 +440,23 @@ class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
     if (progress < 0) progress = 0;
 
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFFF7F7FA), // softBackground
       appBar: AppBar(
         title: const Text(
           "Presentation Practice",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+          style: TextStyle(color: Color(0xFF101828), fontWeight: FontWeight.bold, fontSize: 18),
         ),
         centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        backgroundColor: Colors.white,
+        elevation: 1,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF101828), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
       ),
       body: Container(
-        decoration: const BoxDecoration(
-          // THEME: Blue -> Purple Gradient from "Lingua Franca" Login Screen
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF4FACFE), // Login Light Blue
-              Color(0xFF8A4FFF), // Login Purple
-            ],
-          ),
-        ),
         child: Stack(
           children: [
-            // Decorative Circle
-            Positioned(
-              top: -80,
-              right: -50,
-              child: Container(
-                width: 250, height: 250,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.1),
-                ),
-              ),
-            ),
-
             SafeArea(
               child: Column(
                 children: [
@@ -550,16 +526,15 @@ class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
                                       style: const TextStyle(
                                           fontSize: 56,
                                           fontWeight: FontWeight.w700,
-                                          color: Colors.white,
+                                          color: Color(0xFF101828),
                                           letterSpacing: -1.5,
-                                          shadows: [Shadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]
                                       ),
                                     ),
                                     Text(
                                       "Remaining",
                                       style: TextStyle(
                                         fontSize: 13,
-                                        color: Colors.white.withValues(alpha: 0.9),
+                                        color: const Color(0xFF667085),
                                         fontWeight: FontWeight.w500,
                                       ),
                                     ),
@@ -577,25 +552,32 @@ class _DgSttTestState extends State<DgSttTest> with TickerProviderStateMixin {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                               decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.2),
+                                color: Colors.white,
                                 borderRadius: BorderRadius.circular(30),
-                                border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                                border: Border.all(color: Colors.grey.shade300),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.05),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                               ),
                               child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(Icons.timer_outlined, size: 16, color: Colors.white),
+                                    const Icon(Icons.timer_outlined, size: 16, color: Color(0xFF667085)),
                                     const SizedBox(width: 8),
                                     Text(
                                       "Target: ${_getDurationLabel(_targetDurationSeconds)}",
                                       style: const TextStyle(
-                                        color: Colors.white,
+                                        color: Color(0xFF101828),
                                         fontWeight: FontWeight.bold,
                                         fontSize: 14,
                                       ),
                                     ),
                                     const SizedBox(width: 6),
-                                    Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white.withValues(alpha: 0.8), size: 18),
+                                    Icon(Icons.keyboard_arrow_down_rounded, color: const Color(0xFF667085), size: 18),
                                   ]
                               ),
                             ),
