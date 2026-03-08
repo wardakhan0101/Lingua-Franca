@@ -5,6 +5,7 @@ import spacy
 import tempfile
 import os
 import re
+import subprocess
 from typing import List, Dict, Any, Set, Tuple, Optional
 
 app = FastAPI(title="Fluency Analysis Engine", version="1.0.0")
@@ -433,12 +434,28 @@ def build_annotated_transcript(
         i += 1
 
     # Cleanup any weird spacing around FAST tags
+    if None in pause_markers:
+        parts.append(pause_markers[None])
+        
     out = ' '.join(parts)
     out = out.replace("[FAST] ", "[FAST]").replace(" [/FAST]", "[/FAST]")
     return out
 
 
-def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, Any]], List[Dict], List[Dict], List[Dict], List[Dict]]:
+def get_audio_duration(file_path: str) -> float:
+    """Helper to get the total duration of the audio file using ffprobe."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", file_path
+        ]
+        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip()
+        return float(output)
+    except Exception as e:
+        print(f"Error getting audio duration: {e}")
+        return 0.0
+
+def analyze_fluency(words: List[Dict], transcript: str, audio_duration: float = 0.0) -> tuple[List[Dict[str, Any]], List[Dict], List[Dict], List[Dict], List[Dict]]:
     """Run all fluency checks. Returns (issues, detected_fillers, pauses, stutters, fast_phrases)."""
     issues = []
 
@@ -471,7 +488,7 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
     # 2. Pause Detection (gap > 0.5s between consecutive words, or word stretched > 0.8s)
     long_pauses = []
     
-    # Check for actual silent gaps
+    # 2a. Check for actual silent gaps between words
     for i in range(len(words) - 1):
         end_current = words[i].get("end", 0)
         start_next = words[i + 1].get("start", 0)
@@ -483,7 +500,28 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
                 "next_word_index": i + 1,
             })
             
-    # Check for stretched words (Whisper VAD squashing silence into word bounds)
+    # 2b. Check for leading silence (before the first word)
+    if words:
+        first_word_start = words[0].get("start", 0)
+        if first_word_start > 1.5:
+            long_pauses.append({
+                "gap": first_word_start,
+                "next_word_index": 0,
+                "type": "leading"
+            })
+            
+    # 2c. Check for trailing silence (after the last word until the end of the audio)
+    if words and audio_duration > 0:
+        last_word_end = words[-1].get("end", 0)
+        trailing_gap = audio_duration - last_word_end
+        if trailing_gap > 1.5:
+            long_pauses.append({
+                "gap": trailing_gap,
+                "previous_word_index": len(words) - 1,
+                "type": "trailing"
+            })
+
+    # 2d. Check for stretched words (Whisper VAD squashing silence into word bounds)
     for i, word_data in enumerate(words):
         duration = word_data.get("end", 0) - word_data.get("start", 0)
         if duration > 0.8:
@@ -559,7 +597,7 @@ def analyze_fluency(words: List[Dict], transcript: str) -> tuple[List[Dict[str, 
 
     # 4. Speaking Speed & Rushed Speech (WPM)
     fast_phrases = []
-    chunk_boundaries = [0] + [p["next_word_index"] for p in long_pauses] + [len(words)]
+    chunk_boundaries = [0] + [p["next_word_index"] for p in long_pauses if "next_word_index" in p] + [len(words)]
     for i in range(len(chunk_boundaries) - 1):
         start_idx = chunk_boundaries[i]
         end_idx = chunk_boundaries[i+1] - 1
@@ -678,7 +716,8 @@ async def analyze_audio(file: UploadFile = File(...)):
                     })
 
         transcript = result.get("text", "").strip()
-        fluency_issues, detected_fillers, long_pauses, stutters, fast_phrases = analyze_fluency(all_words, transcript)
+        audio_duration = get_audio_duration(tmp_path)
+        fluency_issues, detected_fillers, long_pauses, stutters, fast_phrases = analyze_fluency(all_words, transcript, audio_duration)
         annotated_transcript = build_annotated_transcript(
             all_words=all_words, 
             detected_fillers=detected_fillers, 
