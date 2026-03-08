@@ -228,6 +228,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
       );
 
       _deepgramSubscription = _liveListener!.stream.listen((result) {
+        debugPrint('🎤 Deepgram result: isFinal=${result.isFinal}, transcript="${result.transcript}"');
         if (result.transcript != null && result.transcript!.isNotEmpty) {
           setState(() {
             if (result.isFinal ?? false) {

@@ -1,0 +1,17 @@
+# Default behavior
+* text=auto
+
+# Force LF for these files (server-side/Docker files)
+Dockerfile text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+requirements*.txt text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Flutter/Dart files
+*.dart text eol=lf
+
+# Windows files can use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -1,0 +1,9 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+spacy==3.7.2
+language-tool-python==2.8
+python-multipart==0.0.6
+transformers==4.36.0
+torch==2.5.1
+sentencepiece==0.2.1
