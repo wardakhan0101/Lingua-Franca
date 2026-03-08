@@ -202,7 +202,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
 
       Map<String, dynamic> queryParams = {
         'model': 'nova-2-general',
-        'punctuate': true,
+        'punctuate': false,
         'interim_results': true,
         'encoding': 'linear16',
         'sample_rate': 16000,
