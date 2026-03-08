@@ -16,6 +16,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
+  bool _isFinished = false;
 
   final Color primaryPurple = const Color(0xFF8A48F0);
   final Color secondaryPurple = const Color(0xFFD9BFFF);
@@ -64,15 +65,27 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     }).toList();
 
     try {
-      final response = await OllamaApiService.getResponse(apiMessages);
+      String response = await OllamaApiService.getResponse(apiMessages);
+      
+      bool isFinished = false;
+      if (response.contains('[END_CONVERSATION]')) {
+        response = response.replaceAll('[END_CONVERSATION]', '').trim();
+        isFinished = true;
+      }
+
       setState(() {
-        _messages.add({
-          "role": "assistant",
-          "content": response,
-          "isVisible": true,
-          "timestamp": DateTime.now(),
-        });
+        if (response.isNotEmpty) {
+          _messages.add({
+            "role": "assistant",
+            "content": response,
+            "isVisible": true,
+            "timestamp": DateTime.now(),
+          });
+        }
         _isLoading = false;
+        if (isFinished) {
+          _isFinished = true;
+        }
       });
       _scrollToBottom();
     } catch (e) {
@@ -99,6 +112,14 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         );
       }
     });
+  }
+
+  void _endConversation() {
+    setState(() {
+      _isFinished = true;
+    });
+    FocusScope.of(context).unfocus();
+    _scrollToBottom();
   }
 
   @override
@@ -134,6 +155,13 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
             ),
           ],
         ),
+        actions: [
+          if (!_isFinished)
+            TextButton(
+              onPressed: _endConversation,
+              child: const Text("End Session", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+            ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -224,6 +252,27 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   }
 
   Widget _buildInputArea() {
+    if (_isFinished) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          border: Border(top: BorderSide(color: Colors.green.shade200)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.check_circle_outline, color: Colors.green.shade700),
+            const SizedBox(width: 8),
+            Text(
+              "Conversation Finished",
+              style: TextStyle(color: Colors.green.shade700, fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
