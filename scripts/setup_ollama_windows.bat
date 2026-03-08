@@ -20,19 +20,35 @@ ollama pull llama3
 
 echo.
 echo --- PHYSICAL ANDROID DEVICE SETUP ---
+echo To test on a physical Android device, you have two options:
+echo.
+echo OPTION 1: ADB Reverse (USB Tethering)
 where adb >nul 2>nul
 if %errorlevel% equ 0 (
-    echo ADB is installed. Attempting to set up reverse port forwarding for physical devices...
+    echo ADB is installed. Attempting to set up reverse port forwarding...
     adb reverse tcp:11434 tcp:11434
     if %errorlevel% equ 0 (
-        echo ADB reverse port forwarding successful!
+        echo ADB reverse port forwarding successful! Keep OLLAMA_URL=http://127.0.0.1:11434/api/chat in your .env file.
     ) else (
-        echo Could not set up ADB reverse port forwarding automatically. Make sure your device is connected and authorized.
+        echo ADB reverse failed. Make sure your device is connected via USB.
     )
 ) else (
     echo ADB could not be found in your PATH. 
-    echo If testing on a physical Android device, you MUST run this command in your Flutter project terminal:
-    echo adb reverse tcp:11434 tcp:11434
+)
+echo.
+echo OPTION 2: Wi-Fi LAN Connection (More Stable)
+echo Setting Ollama to accept local network connections...
+setx OLLAMA_HOST "0.0.0.0" >nul 2>nul
+if %errorlevel% equ 0 (
+    echo [SUCCESS] OLLAMA_HOST set. You must RESTART the Ollama app for this to take effect!
+    echo.
+    echo To use Wi-Fi:
+    echo 1. Open Command Prompt and type: ipconfig
+    echo 2. Find your "IPv4 Address" (e.g., 192.168.1.X)
+    echo 3. In the Flutter project's .env file, add/update this line:
+    echo    OLLAMA_URL=http://YOUR_IPv4_ADDRESS:11434/api/chat
+) else (
+    echo Could not set OLLAMA_HOST automatically. Run 'setx OLLAMA_HOST "0.0.0.0"' manually.
 )
 echo -------------------------------------
 echo.
