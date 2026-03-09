@@ -201,7 +201,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         broadcastStream,
         queryParams: {
           'model': 'nova-2-general',
-          'punctuate': true,
+          'punctuate': false,
           'interim_results': true,
           'encoding': 'linear16',
           'sample_rate': 16000,
@@ -656,7 +656,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'AI Assistant is typing...',
+                            _isFinished ? 'Generating report...' : 'AI Assistant is typing...',
                             style: TextStyle(
                               color: primaryPurple,
                               fontSize: 12,
