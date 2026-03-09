@@ -11,6 +11,7 @@ import '../services/grammar_api_service.dart';
 import '../services/fluency_api_service.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
+import 'unified_report_screen.dart';
 
 final stt = dotenv.env['STT'];
 
@@ -18,17 +19,20 @@ class TimedPresentationScreen extends StatefulWidget {
   const TimedPresentationScreen({super.key});
 
   @override
-  State<TimedPresentationScreen> createState() => _TimedPresentationScreenState();
+  State<TimedPresentationScreen> createState() =>
+      _TimedPresentationScreenState();
 }
 
-class _TimedPresentationScreenState extends State<TimedPresentationScreen> with TickerProviderStateMixin {
+class _TimedPresentationScreenState extends State<TimedPresentationScreen>
+    with TickerProviderStateMixin {
   final AudioRecorder _recorder = AudioRecorder();
   Deepgram? _deepgram;
   DeepgramLiveListener? _liveListener;
   StreamSubscription? _deepgramSubscription;
 
   final TextEditingController _textController = TextEditingController();
-  late ScrollController _scrollController = ScrollController(); // NEW: For auto-scrolling
+  late ScrollController _scrollController =
+      ScrollController(); // NEW: For auto-scrolling
 
   String _fullTranscript = '';
   String _currentSegment = '';
@@ -118,53 +122,72 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+      builder:
+          (context) => Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            const SizedBox(height: 20),
-            const Text("Select Duration", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2E1065))),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              alignment: WrapAlignment.center,
-              children: options.map((seconds) {
-                bool isSelected = _targetDurationSeconds == seconds;
-                return ChoiceChip(
-                  label: Text(_getDurationLabel(seconds)),
-                  selected: isSelected,
-                  selectedColor: const Color(0xFF6C63FF),
-                  backgroundColor: const Color(0xFFF5F3FF),
-                  labelStyle: TextStyle(color: isSelected ? Colors.white : const Color(0xFF6C63FF)),
-                  side: BorderSide.none,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  onSelected: (bool selected) {
-                    if (selected) {
-                      setState(() {
-                        _targetDurationSeconds = seconds;
-                        _elapsedSeconds = 0;
-                      });
-                      Navigator.pop(context);
-                    }
-                  },
-                );
-              }).toList(),
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Select Duration",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2E1065),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  alignment: WrapAlignment.center,
+                  children:
+                      options.map((seconds) {
+                        bool isSelected = _targetDurationSeconds == seconds;
+                        return ChoiceChip(
+                          label: Text(_getDurationLabel(seconds)),
+                          selected: isSelected,
+                          selectedColor: const Color(0xFF6C63FF),
+                          backgroundColor: const Color(0xFFF5F3FF),
+                          labelStyle: TextStyle(
+                            color:
+                                isSelected
+                                    ? Colors.white
+                                    : const Color(0xFF6C63FF),
+                          ),
+                          side: BorderSide.none,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          onSelected: (bool selected) {
+                            if (selected) {
+                              setState(() {
+                                _targetDurationSeconds = seconds;
+                                _elapsedSeconds = 0;
+                              });
+                              Navigator.pop(context);
+                            }
+                          },
+                        );
+                      }).toList(),
+                ),
+                const SizedBox(height: 20),
+              ],
             ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
+          ),
     );
   }
 
@@ -177,7 +200,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
     }
 
     setState(() {
-      if (_fullTranscript.isEmpty || _fullTranscript == 'Your speech will appear here...') {
+      if (_fullTranscript.isEmpty ||
+          _fullTranscript == 'Your speech will appear here...') {
         _fullTranscript = '';
         _textController.clear();
       }
@@ -227,35 +251,45 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
         queryParams: queryParams,
       );
 
-      _deepgramSubscription = _liveListener!.stream.listen((result) {
-        debugPrint('🎤 Deepgram result: isFinal=${result.isFinal}, transcript="${result.transcript}"');
-        if (result.transcript != null && result.transcript!.isNotEmpty) {
-          setState(() {
-            if (result.isFinal ?? false) {
-              _fullTranscript += (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
-              _currentSegment = '';
-            } else {
-              _currentSegment = result.transcript!;
-            }
-            _textController.text = _fullTranscript +
-                (_currentSegment.isEmpty ? '' : (_fullTranscript.isEmpty ? '' : ' ') + _currentSegment);
-            _textController.selection = TextSelection.fromPosition(
-              TextPosition(offset: _textController.text.length),
-            );
-          });
-          // NEW: Auto-scroll to bottom after text update
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-            }
-          });
-        }
-      }, onError: (error) {
-        setState(() => _textController.text = 'Error: $error');
-      });
+      _deepgramSubscription = _liveListener!.stream.listen(
+        (result) {
+          debugPrint(
+            '🎤 Deepgram result: isFinal=${result.isFinal}, transcript="${result.transcript}"',
+          );
+          if (result.transcript != null && result.transcript!.isNotEmpty) {
+            setState(() {
+              if (result.isFinal ?? false) {
+                _fullTranscript +=
+                    (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
+                _currentSegment = '';
+              } else {
+                _currentSegment = result.transcript!;
+              }
+              _textController.text =
+                  _fullTranscript +
+                  (_currentSegment.isEmpty
+                      ? ''
+                      : (_fullTranscript.isEmpty ? '' : ' ') + _currentSegment);
+              _textController.selection = TextSelection.fromPosition(
+                TextPosition(offset: _textController.text.length),
+              );
+            });
+            // NEW: Auto-scroll to bottom after text update
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_scrollController.hasClients) {
+                _scrollController.jumpTo(
+                  _scrollController.position.maxScrollExtent,
+                );
+              }
+            });
+          }
+        },
+        onError: (error) {
+          setState(() => _textController.text = 'Error: $error');
+        },
+      );
 
       _liveListener!.start();
-
     } catch (e) {
       setState(() {
         _textController.text = 'Error: $e';
@@ -288,7 +322,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
       }
 
       if (_currentSegment.isNotEmpty) {
-        _fullTranscript += (_fullTranscript.isEmpty ? '' : ' ') + _currentSegment;
+        _fullTranscript +=
+            (_fullTranscript.isEmpty ? '' : ' ') + _currentSegment;
         _currentSegment = '';
       }
 
@@ -325,11 +360,43 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
 
   List<int> _getWavHeaderBytes(int dataSize) {
     return [
-      0x52, 0x49, 0x46, 0x46, ...(_int32ToBytes(dataSize + 36)),
-      0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20,
-      0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-      0x80, 0x3E, 0x00, 0x00, 0x00, 0x7D, 0x00, 0x00,
-      0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61,
+      0x52,
+      0x49,
+      0x46,
+      0x46,
+      ...(_int32ToBytes(dataSize + 36)),
+      0x57,
+      0x41,
+      0x56,
+      0x45,
+      0x66,
+      0x6D,
+      0x74,
+      0x20,
+      0x10,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x80,
+      0x3E,
+      0x00,
+      0x00,
+      0x00,
+      0x7D,
+      0x00,
+      0x00,
+      0x02,
+      0x00,
+      0x10,
+      0x00,
+      0x64,
+      0x61,
+      0x74,
+      0x61,
       ...(_int32ToBytes(dataSize)),
     ];
   }
@@ -339,7 +406,12 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
   }
 
   List<int> _int32ToBytes(int value) {
-    return [value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF, (value >> 24) & 0xFF];
+    return [
+      value & 0xFF,
+      (value >> 8) & 0xFF,
+      (value >> 16) & 0xFF,
+      (value >> 24) & 0xFF,
+    ];
   }
 
   void _generateCombinedReport() async {
@@ -360,33 +432,47 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
 
     try {
       // 1. Fire both requests but catch errors independently so one failure doesn't crash the other
-      final grammarFuture = GrammarApiService.analyzeText(textToAnalyze).catchError((e) {
+      final grammarFuture = GrammarApiService.analyzeText(
+        textToAnalyze,
+      ).catchError((e) {
         debugPrint("Grammar API Error gracefully caught: $e");
         return GrammarAnalysisResult(
           originalText: textToAnalyze,
-          correctedText: "Grammar API is currently offline. Please try again later.",
+          correctedText:
+              "Grammar API is currently offline. Please try again later.",
           mistakes: [],
-          summary: GrammarSummary(totalMistakes: 0, wordCount: 0, sentenceCount: 0, grammarScore: 0),
+          summary: GrammarSummary(
+            totalMistakes: 0,
+            wordCount: 0,
+            sentenceCount: 0,
+            grammarScore: 0,
+          ),
           mistakeCategories: {},
           message: e.toString(),
         );
       });
 
-      final fluencyFuture = FluencyApiService.analyzeAudio(pathToUse).catchError((e) {
+      final fluencyFuture = FluencyApiService.analyzeAudio(
+        pathToUse,
+      ).catchError((e) {
         debugPrint("Fluency API Error gracefully caught: $e");
         return {
           "transcript": "Fluency API is currently offline or errored out.",
-          "annotated_transcript": "Fluency API is currently offline or errored out.",
-          "fluency_issues": [{
-            "title": "API ERROR",
-            "errorText": "Service Unavailable",
-            "explanation": "The fluency analysis engine failed to respond. $e",
-            "suggestions": ["Try again later"]
-          }],
+          "annotated_transcript":
+              "Fluency API is currently offline or errored out.",
+          "fluency_issues": [
+            {
+              "title": "API ERROR",
+              "errorText": "Service Unavailable",
+              "explanation":
+                  "The fluency analysis engine failed to respond. $e",
+              "suggestions": ["Try again later"],
+            },
+          ],
           "detected_fillers": [],
           "stutters": [],
           "pauses": [],
-          "fast_phrases": []
+          "fast_phrases": [],
         };
       });
 
@@ -400,11 +486,12 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => UnifiedReportScreen(
-              grammarResult: grammarResult,
-              fluencyResult: fluencyResult,
-              audioPath: pathToUse,
-            ),
+            builder:
+                (context) => UnifiedReportScreen(
+                  grammarResult: grammarResult,
+                  fluencyResult: fluencyResult,
+                  audioPath: pathToUse,
+                ),
           ),
         );
       }
@@ -419,7 +506,11 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
 
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -437,7 +528,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
 
   @override
   Widget build(BuildContext context) {
-    double progress = (_targetDurationSeconds - _elapsedSeconds) / _targetDurationSeconds;
+    double progress =
+        (_targetDurationSeconds - _elapsedSeconds) / _targetDurationSeconds;
     if (progress < 0) progress = 0;
 
     return Scaffold(
@@ -445,13 +537,21 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
       appBar: AppBar(
         title: const Text(
           "Presentation Practice",
-          style: TextStyle(color: Color(0xFF101828), fontWeight: FontWeight.bold, fontSize: 18),
+          style: TextStyle(
+            color: Color(0xFF101828),
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
         ),
         centerTitle: true,
         backgroundColor: Colors.white,
         elevation: 1,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF101828), size: 20),
+          icon: const Icon(
+            Icons.arrow_back,
+            color: Color(0xFF101828),
+            size: 20,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -512,11 +612,14 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
 
                           // 2. TIMER (Gold Accent)
                           SizedBox(
-                            height: 190, width: 190,
+                            height: 190,
+                            width: 190,
                             child: CustomPaint(
                               painter: TimerPainter(
                                 progress: progress,
-                                color: const Color(0xFF7630E1), // Gold from Dashboard Icons
+                                color: const Color(
+                                  0xFF7630E1,
+                                ), // Gold from Dashboard Icons
                               ),
                               child: Center(
                                 child: Column(
@@ -525,10 +628,10 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                                     Text(
                                       _formatTime(_elapsedSeconds),
                                       style: const TextStyle(
-                                          fontSize: 56,
-                                          fontWeight: FontWeight.w700,
-                                          color: Color(0xFF101828),
-                                          letterSpacing: -1.5,
+                                        fontSize: 56,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF101828),
+                                        letterSpacing: -1.5,
                                       ),
                                     ),
                                     Text(
@@ -551,7 +654,10 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                           GestureDetector(
                             onTap: _showDurationPicker,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 10,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(30),
@@ -565,21 +671,29 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                                 ],
                               ),
                               child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.timer_outlined, size: 16, color: Color(0xFF667085)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "Target: ${_getDurationLabel(_targetDurationSeconds)}",
-                                      style: const TextStyle(
-                                        color: Color(0xFF101828),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
-                                      ),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.timer_outlined,
+                                    size: 16,
+                                    color: Color(0xFF667085),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Target: ${_getDurationLabel(_targetDurationSeconds)}",
+                                    style: const TextStyle(
+                                      color: Color(0xFF101828),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
                                     ),
-                                    const SizedBox(width: 6),
-                                    Icon(Icons.keyboard_arrow_down_rounded, color: const Color(0xFF667085), size: 18),
-                                  ]
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    Icons.keyboard_arrow_down_rounded,
+                                    color: const Color(0xFF667085),
+                                    size: 18,
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -591,15 +705,29 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                             opacity: _isListening ? 1.0 : 0.0,
                             duration: const Duration(milliseconds: 300),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.redAccent,
                                 borderRadius: BorderRadius.circular(12),
-                                boxShadow: [BoxShadow(color: Colors.redAccent.withValues(alpha: 0.4), blurRadius: 8)],
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.redAccent.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                    blurRadius: 8,
+                                  ),
+                                ],
                               ),
                               child: const Text(
                                 "REC",
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
                               ),
                             ),
                           ),
@@ -627,14 +755,25 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                                   children: [
                                     Container(
                                       width: double.infinity,
-                                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 24,
+                                        vertical: 16,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFFF9FAFB),
-                                        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+                                        border: Border(
+                                          bottom: BorderSide(
+                                            color: Colors.grey.shade100,
+                                          ),
+                                        ),
                                       ),
                                       child: Row(
                                         children: [
-                                          Icon(Icons.notes_rounded, size: 16, color: Colors.grey[400]),
+                                          Icon(
+                                            Icons.notes_rounded,
+                                            size: 16,
+                                            color: Colors.grey[400],
+                                          ),
                                           const SizedBox(width: 8),
                                           Text(
                                             "LIVE TRANSCRIPT",
@@ -651,11 +790,14 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                                     Expanded(
                                       child: TextField(
                                         controller: _textController,
-                                        scrollController: _scrollController, // NEW: Add scroll controller
+                                        scrollController:
+                                            _scrollController, // NEW: Add scroll controller
                                         maxLines: null,
                                         expands: true,
                                         readOnly: true,
-                                        textAlignVertical: TextAlignVertical.top, // FIX: Forces text to start at top
+                                        textAlignVertical:
+                                            TextAlignVertical
+                                                .top, // FIX: Forces text to start at top
                                         style: const TextStyle(
                                           fontSize: 18,
                                           height: 1.6,
@@ -664,9 +806,13 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                                         ),
                                         decoration: InputDecoration(
                                           border: InputBorder.none,
-                                          contentPadding: const EdgeInsets.all(24), // FIX: Prevents edge clipping
+                                          contentPadding: const EdgeInsets.all(
+                                            24,
+                                          ), // FIX: Prevents edge clipping
                                           hintText: "Start speaking...",
-                                          hintStyle: TextStyle(color: Colors.grey[300]),
+                                          hintStyle: TextStyle(
+                                            color: Colors.grey[300],
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -683,7 +829,12 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                   // --- BOTTOM CONTROLS ---
                   Container(
                     color: Colors.white,
-                    padding: const EdgeInsets.only(left: 24, right: 24, bottom: 24, top: 12),
+                    padding: const EdgeInsets.only(
+                      left: 24,
+                      right: 24,
+                      bottom: 24,
+                      top: 12,
+                    ),
                     child: _buildBottomControls(),
                   ),
                 ],
@@ -707,9 +858,22 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF6C63FF))),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF6C63FF),
+              ),
+            ),
             SizedBox(width: 12),
-            Text("Analyzing speech...", style: TextStyle(color: Color(0xFF6C63FF), fontWeight: FontWeight.w600)),
+            Text(
+              "Analyzing speech...",
+              style: TextStyle(
+                color: Color(0xFF6C63FF),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       );
@@ -721,7 +885,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
         child: GestureDetector(
           onTap: _stopListening,
           child: Container(
-            height: 72, width: 72,
+            height: 72,
+            width: 72,
             decoration: BoxDecoration(
               color: const Color(0xFFEF4444),
               shape: BoxShape.circle,
@@ -733,7 +898,11 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                 ),
               ],
             ),
-            child: const Icon(Icons.stop_rounded, color: Colors.white, size: 36),
+            child: const Icon(
+              Icons.stop_rounded,
+              color: Colors.white,
+              size: 36,
+            ),
           ),
         ),
       );
@@ -748,13 +917,17 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
             onTap: _startListening,
             borderRadius: BorderRadius.circular(16),
             child: Container(
-              height: 56, width: 56,
+              height: 56,
+              width: 56,
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: Colors.grey.shade200),
               ),
-              child: const Icon(Icons.refresh_rounded, color: Color(0xFF4B5563)),
+              child: const Icon(
+                Icons.refresh_rounded,
+                color: Color(0xFF4B5563),
+              ),
             ),
           ),
           const SizedBox(width: 16),
@@ -778,17 +951,27 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.transparent,
                   shadowColor: Colors.transparent,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 child: const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
                       "View Analysis",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                     SizedBox(width: 8),
-                    Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                    Icon(
+                      Icons.arrow_forward_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                   ],
                 ),
               ),
@@ -803,7 +986,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen> with 
       child: GestureDetector(
         onTap: _startListening,
         child: Container(
-          height: 72, width: 72,
+          height: 72,
+          width: 72,
           decoration: BoxDecoration(
             color: const Color(0xFF6C63FF), // Brand Purple
             shape: BoxShape.circle,
@@ -831,74 +1015,34 @@ class TimerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    Paint bg = Paint()
-      ..color = Colors.white.withValues(alpha: 0.2)
-      ..strokeWidth = 12
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
+    Paint bg =
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.2)
+          ..strokeWidth = 12
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
 
-    Paint fg = Paint()
-      ..color = color
-      ..strokeWidth = 12
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
+    Paint fg =
+        Paint()
+          ..color = color
+          ..strokeWidth = 12
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
 
     Offset c = Offset(size.width / 2, size.height / 2);
     double r = min(size.width / 2, size.height / 2);
 
     canvas.drawCircle(c, r, bg);
-    canvas.drawArc(Rect.fromCircle(center: c, radius: r), -pi / 2, 2 * pi * progress, false, fg);
-  }
-
-  @override
-  bool shouldRepaint(TimerPainter old) => old.progress != progress || old.color != color;
-}
-
-class UnifiedReportScreen extends StatelessWidget {
-  final GrammarAnalysisResult grammarResult;
-  final Map<String, dynamic> fluencyResult;
-  final String audioPath;
-
-  const UnifiedReportScreen({
-    super.key,
-    required this.grammarResult,
-    required this.fluencyResult,
-    required this.audioPath,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF5F7FB),
-        appBar: AppBar(
-          title: const Text(
-            "Performance Analysis",
-            style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: Colors.white,
-          elevation: 0,
-          leading: const BackButton(color: Colors.black87),
-          bottom: const TabBar(
-            labelColor: Color(0xFF6C63FF),
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: Color(0xFF6C63FF),
-            indicatorWeight: 3,
-            labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            tabs: [
-              Tab(text: "Grammar"),
-              Tab(text: "Fluency"),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            GrammarReportScreen(result: grammarResult),
-            FluencyScreen(fluencyData: fluencyResult, audioPath: audioPath),
-          ],
-        ),
-      ),
+    canvas.drawArc(
+      Rect.fromCircle(center: c, radius: r),
+      -pi / 2,
+      2 * pi * progress,
+      false,
+      fg,
     );
   }
+
+  @override
+  bool shouldRepaint(TimerPainter old) =>
+      old.progress != progress || old.color != color;
 }

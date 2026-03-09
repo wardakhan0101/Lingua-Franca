@@ -10,7 +10,7 @@ import '../models/scenario.dart';
 import '../services/ollama_api_service.dart';
 import '../services/fluency_api_service.dart';
 import '../services/grammar_api_service.dart';
-import 'grammar_report_screen.dart';
+import 'unified_report_screen.dart';
 
 class ScenarioChatScreen extends StatefulWidget {
   final Scenario scenario;
@@ -509,9 +509,10 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => GrammarReportScreen(
-              result: grammarResult,
-              // Note: fluencyResult and audioPath will be handled when the unified screen is built
+            builder: (context) => UnifiedReportScreen(
+              grammarResult: grammarResult,
+              fluencyResult: combinedFluencyResult,
+              audioPath: _currentTurnAudioPath, // Pass the last known clip
             ),
           ),
         );
