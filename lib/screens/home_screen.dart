@@ -5,6 +5,8 @@ import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import '../models/scenario.dart';
 import 'scenario_chat_screen.dart';
 
+import 'accent_test_screen.dart';
+
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
   final Color primaryColor;
@@ -144,6 +146,26 @@ class HomeScreen extends StatelessWidget {
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (context) => const AccentTestScreen()),
+                    ),
+                    icon: const Icon(Icons.record_voice_over),
+                    label: const Text('Test TTS Engine'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: primaryPurple,
+                      side: BorderSide(color: primaryPurple),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
                       ),
                     ),
                   ),

@@ -18,6 +18,7 @@ class OllamaApiService {
   static const String _model = 'llama3.2';
 
   static Future<String> getResponse(List<Map<String, String>> messages) async {
+    if (kDebugMode) print('Ollama API Attempting to connect to: $_baseUrl using $_model');
     try {
       final response = await http.post(
         Uri.parse(_baseUrl),
@@ -33,9 +34,14 @@ class OllamaApiService {
         final data = jsonDecode(response.body);
         return data['message']['content'];
       } else {
-        throw Exception('Failed to connect to Local AI. Is Ollama running and the $_model model pulled?');
+        if (kDebugMode) {
+          print('Ollama API Error Status: ${response.statusCode}');
+          print('Ollama API Error Body: ${response.body}');
+        }
+        throw Exception('Failed to connect to Local AI. Status: ${response.statusCode}');
       }
     } catch (e) {
+      if (kDebugMode) print('Ollama API Exception: $e');
       throw Exception('Network Error: Please ensure Ollama is running locally. ($e)');
     }
   }
