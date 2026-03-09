@@ -128,7 +128,7 @@ class HomeScreen extends StatelessWidget {
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: () => _showScenarioSelection(context),
+                    onPressed: () => _showPracticeModeSelection(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryPurple,
                       foregroundColor: Colors.white,
@@ -549,8 +549,8 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- SCENARIO SELECTION BOTTOM SHEET ---
-  void _showScenarioSelection(BuildContext context) {
+  // --- PRACTICE MODE SELECTION BOTTOM SHEET ---
+  void _showPracticeModeSelection(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -583,7 +583,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text(
-              "Choose a scenario to practice your speaking skills.",
+              "Choose a high-level practice mode to get started.",
               style: TextStyle(fontSize: 14, color: Color(0xFF667085)),
             ),
             const SizedBox(height: 24),
@@ -604,7 +604,91 @@ class HomeScreen extends StatelessWidget {
             
             const SizedBox(height: 12),
             
-            // 2. Ordering Fast Food (MVP)
+            // 2. Scenario Based Dialogs
+            _buildScenarioOption(
+              context: context,
+              icon: Icons.chat_bubble_outline,
+              title: "Scenario Based Dialogs",
+              subtitle: "Practice specific real-world situations",
+              onTap: () {
+                Navigator.pop(context); // Close the first sheet
+                _showSpecificScenarios(context); // Open the scenarios sheet
+              },
+            ),
+
+            const SizedBox(height: 12),
+            
+            // 3. Freestyle Conversation (Locked)
+            _buildScenarioOption(
+              context: context,
+              icon: Icons.forum_outlined,
+              title: "Freestyle Conversation",
+              subtitle: "Open-ended chat with AI",
+              isLocked: true,
+            ),
+            
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- SPECIFIC SCENARIOS BOTTOM SHEET ---
+  void _showSpecificScenarios(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Color(0xFF101828)),
+                  onPressed: () {
+                    Navigator.pop(context); // Close scenarios sheet
+                    _showPracticeModeSelection(context); // Reopen mode sheet
+                  },
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  "Scenarios",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF101828),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Padding(
+              padding: EdgeInsets.only(left: 12.0),
+              child: Text(
+                "Select a specific situation to practice.",
+                style: TextStyle(fontSize: 14, color: Color(0xFF667085)),
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            // 1. Ordering Fast Food (MVP)
             _buildScenarioOption(
               context: context,
               icon: Icons.fastfood_outlined,
@@ -617,7 +701,8 @@ class HomeScreen extends StatelessWidget {
                     scenario: const Scenario(
                       id: "fast_food_1",
                       title: "Ordering Fast Food",
-                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses short, conversational, and authentic to a fast-food drive-thru or counter experience. Do not offer more than 2-3 sentences per turn. Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them.",
+                      // UPDATED IN PHASE 5: Adding [END_CONVERSATION] instruction
+                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses short, conversational, and authentic to a fast-food drive-thru or counter experience. Do not offer more than 2-3 sentences per turn. Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
                       initialGreeting: "Hi there! Welcome to Burger Haven. What can I get for you today?",
                     ),
                   )),
@@ -627,7 +712,7 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 12),
             
-            // 3. Job Interview (Locked)
+            // 2. Job Interview (Locked)
             _buildScenarioOption(
               context: context,
               icon: Icons.work_outline,
@@ -638,7 +723,7 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 12),
 
-            // 4. Travel & Hotel (Locked)
+            // 3. Travel & Hotel (Locked)
             _buildScenarioOption(
               context: context,
               icon: Icons.flight_takeoff_outlined,

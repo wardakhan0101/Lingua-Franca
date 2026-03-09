@@ -9,7 +9,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 # Add the parent directory to sys.path to import api.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api import analyze_fluency, model
+from api import analyze_fluency, model, get_audio_duration
 
 AUDIO_DIR = os.path.join(os.path.dirname(__file__), 'audio')
 
@@ -42,7 +42,8 @@ def run_analysis(filename):
                 })
 
     transcript = result.get("text", "").strip()
-    issues, detected_fillers, pauses, stutters, fast_phrases = analyze_fluency(all_words, transcript)
+    audio_duration = get_audio_duration(filepath)
+    issues, detected_fillers, pauses, stutters, fast_phrases = analyze_fluency(all_words, transcript, audio_duration)
     
     return {
         "transcript": transcript,
