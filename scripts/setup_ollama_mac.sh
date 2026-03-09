@@ -26,8 +26,8 @@ open -a Ollama
 echo "Waiting for Ollama API to start..."
 sleep 5
 
-echo "Pulling llama3 model (this may take a while depending on your internet connection)..."
-ollama pull llama3
+echo "Pulling llama3.2 (3B) model (this is highly recommended for 8GB RAM devices)..."
+ollama pull llama3.2
 
 echo "Setup complete! The local AI is ready for use."
 

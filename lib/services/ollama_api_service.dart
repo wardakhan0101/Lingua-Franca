@@ -15,7 +15,7 @@ class OllamaApiService {
     return 'http://127.0.0.1:11434/api/chat';
   }
   
-  static const String _model = 'llama3';
+  static const String _model = 'llama3.2';
 
   static Future<String> getResponse(List<Map<String, String>> messages) async {
     try {

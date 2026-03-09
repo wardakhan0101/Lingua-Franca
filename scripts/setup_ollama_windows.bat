@@ -15,8 +15,8 @@ if %errorlevel% neq 0 (
 echo Make sure the Ollama application is running.
 
 echo.
-echo Pulling llama3 model (this may take a while depending on your internet connection)...
-ollama pull llama3
+echo Pulling llama3.2 (3B) model (this is highly recommended for 8GB RAM devices)...
+ollama pull llama3.2
 
 echo.
 echo --- PHYSICAL ANDROID DEVICE SETUP ---
