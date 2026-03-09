@@ -48,6 +48,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   StreamSubscription<List<int>>? _audioStreamSubscription;
   String? _currentTurnAudioPath;
   final List<Map<String, dynamic>> _turnFluencyResults = [];
+  final List<Future<void>> _activeFluencyTasks = []; // Track pending background tasks
   final List<String> _userTranscripts = [];
 
   @override
@@ -80,6 +81,10 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     }
 
     final userMessage = text.trim();
+    
+    // Add to user transcripts so it gets analyzed by Grammar API
+    _userTranscripts.add(userMessage);
+
     setState(() {
       _messages.add({
         "role": "user",
@@ -282,7 +287,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
         // Auto-send the transcribed text if it's not empty
         if (finalTranscript.trim().isNotEmpty) {
-          _userTranscripts.add(finalTranscript.trim());
           _sendMessage(finalTranscript);
         }
       }
@@ -297,26 +301,28 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     }
   }
 
-  void _processTurnFluency(String audioPath) async {
-    try {
-      debugPrint("Starting background fluency analysis for turn...");
-      final result = await FluencyApiService.analyzeAudio(audioPath);
+  void _processTurnFluency(String audioPath) {
+    debugPrint("Queuing background fluency analysis for turn...");
+    
+    final futureObj = FluencyApiService.analyzeAudio(audioPath).then((result) {
       if (mounted) {
         _turnFluencyResults.add(result);
         debugPrint("Successfully captured fluency result for turn.");
       }
-    } catch (e) {
+    }).catchError((e) {
       debugPrint("Background fluency analysis failed for turn: $e");
-      // Add a dummy/empty block so we don't skew the results entirely if one fails
-      _turnFluencyResults.add({
-        "fluency_issues": [],
-        "detected_fillers": [],
-        "stutters": [],
-        "pauses": [],
-        "fast_phrases": [],
-        // don't include avg_speech_rate so we skip it during aggregation
-      });
-    }
+      if (mounted) {
+        _turnFluencyResults.add({
+          "fluency_issues": [],
+          "detected_fillers": [],
+          "stutters": [],
+          "pauses": [],
+          "fast_phrases": [],
+        });
+      }
+    });
+
+    _activeFluencyTasks.add(futureObj);
   }
 
   // --- Audio File Handling ---
@@ -425,7 +431,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
     try {
       // 1. GRAMMAR: Batch the entire conversation transcript
-      final fullTextToAnalyze = _userTranscripts.join(" ");
+      // Join with a period and space so LanguageTool can correctly identify sentence boundaries
+      final fullTextToAnalyze = _userTranscripts.join(". ");
       final grammarFuture = GrammarApiService.analyzeText(
         fullTextToAnalyze,
       ).catchError((e) {
@@ -447,8 +454,10 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       });
 
       // 2. FLUENCY: Aggregate the background queue results
-      // We will wait a brief moment in case the user hit "End Session" literally immediately after their last word
-      await Future.delayed(const Duration(seconds: 1));
+      // Await all pending fluency API requests so we don't drop the latest audio turn!
+      if (_activeFluencyTasks.isNotEmpty) {
+        await Future.wait(_activeFluencyTasks);
+      }
 
       List<dynamic> combinedFluencyIssues = [];
       List<dynamic> combinedFillers = [];
