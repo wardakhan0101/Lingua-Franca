@@ -81,20 +81,19 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     final sttKey = dotenv.env['STT'] ?? '';
     _deepgram = Deepgram(sttKey);
 
-    _initAudioSession().then((_) {
-      // Pre-warm the Grammar API Cloud Run instance in the background so it's
-      // ready by the time the conversation ends. Fire-and-forget; errors are ignored.
+    _initAudioSession().then((_) async {
+      // Pre-warm the Grammar API Cloud Run instance in the background.
       GrammarApiService.analyzeText('warmup').catchError((_) {});
 
-      // Play the initial AI greeting after the audio session is fully ready.
-      // NOTE: _isTtsPlaying is managed exclusively inside _playAiResponse via
-      // try/finally. Do NOT add a playerStateStream listener here — it fires
-      // immediately with playing=false (player is idle) and would race-reset the flag.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _playAiResponse(widget.scenario.initialGreeting);
-        }
-      });
+      // BUGFIX: On Android, the audio hardware needs extra time to settle after
+      // session configuration on first launch (Flutter startup is very heavy).
+      // `addPostFrameCallback` is not sufficient because the first frame fires
+      // during peak CPU load (skipping 100+ frames). A fixed delay guarantees
+      // the audio subsystem is ready before we attempt playback.
+      await Future.delayed(const Duration(milliseconds: 900));
+      if (mounted) {
+        _playAiResponse(widget.scenario.initialGreeting);
+      }
     });
   }
 
