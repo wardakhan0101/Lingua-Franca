@@ -51,7 +51,7 @@ class TTSRequest(BaseModel):
 # --- Health check endpoint ---
 @app.get("/")
 def health_check():
-    return {"status": "TTS server is running", "cached_accents": list(SPEAKER_LATENTS.keys())}
+    return {"status": "TTS server is running (OPTIMIZED)", "cached_accents": list(SPEAKER_LATENTS.keys())}
 
 # --- Main TTS endpoint ---
 @app.post("/synthesize")
