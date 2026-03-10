@@ -5,8 +5,6 @@ import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import '../models/scenario.dart';
 import 'scenario_chat_screen.dart';
 
-import 'accent_test_screen.dart';
-
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
   final Color primaryColor;
@@ -151,25 +149,6 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
 
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (context) => const AccentTestScreen()),
-                    ),
-                    icon: const Icon(Icons.record_voice_over),
-                    label: const Text('Test TTS Engine'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: primaryPurple,
-                      side: BorderSide(color: primaryPurple),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                ),
 
                 const SizedBox(height: 32),
 
@@ -724,7 +703,7 @@ class HomeScreen extends StatelessWidget {
                       id: "fast_food_1",
                       title: "Ordering Fast Food",
                       // UPDATED IN PHASE 5: Adding [END_CONVERSATION] instruction
-                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses short, conversational, and authentic to a fast-food drive-thru or counter experience. Do not offer more than 2-3 sentences per turn. Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
+                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses extremely short and conversational. You MUST respond with only 1 short sentence per turn (maximum 10 words). Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them in one short sentence. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
                       initialGreeting: "Hi there! Welcome to Burger Haven. What can I get for you today?",
                     ),
                   )),
