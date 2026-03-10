@@ -713,24 +713,48 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 12),
             
-            // 2. Job Interview (Locked)
+            // 2. Job Interview
             _buildScenarioOption(
               context: context,
               icon: Icons.work_outline,
               title: "Job Interview",
               subtitle: "Professional mock interview practice",
-              isLocked: true,
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (context) => ScenarioChatScreen(
+                    scenario: const Scenario(
+                      id: "job_interview_1",
+                      title: "Job Interview",
+                      systemPrompt: "You are a professional but friendly HR interviewer at a reputable tech company. You are interviewing the user for a Software Engineer role. Keep every response to 1 short sentence (under 12 words). Ask one question at a time. Start with a brief welcome. After 5–6 exchanges when you have enough information, wrap up politely and output the exact phrase [END_CONVERSATION] at the end of your final message.",
+                      initialGreeting: "Welcome! Please tell me a little about yourself.",
+                    ),
+                  )),
+                );
+              },
             ),
 
             const SizedBox(height: 12),
 
-            // 3. Travel & Hotel (Locked)
+            // 3. Travel & Hotel
             _buildScenarioOption(
               context: context,
               icon: Icons.flight_takeoff_outlined,
               title: "Travel & Hotel",
               subtitle: "Practice checking in and navigating travel",
-              isLocked: true,
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (context) => ScenarioChatScreen(
+                    scenario: const Scenario(
+                      id: "travel_hotel_1",
+                      title: "Travel & Hotel",
+                      systemPrompt: "You are a polite hotel front-desk receptionist at a mid-range hotel. Keep every response to 1 short sentence (under 12 words). Ask one question at a time. Help the guest check in: ask for their name, confirm reservation, explain breakfast hours, and hand over the key card. After check-in is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your final message.",
+                      initialGreeting: "Good evening! Welcome to Grand Stay Hotel. How may I help you?",
+                    ),
+                  )),
+                );
+              },
             ),
             
             const SizedBox(height: 24),
