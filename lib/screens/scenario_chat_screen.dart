@@ -31,6 +31,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
   bool _isFinished = false;
+  bool _showTextInput = false; // Toggles the slide-in text field
+  final FocusNode _textFocusNode = FocusNode();
 
   final Color primaryPurple = const Color(0xFF8A48F0);
   final Color secondaryPurple = const Color(0xFFD9BFFF);
@@ -642,7 +644,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     _audioFileSink?.close();
     _controller.dispose();
     _scrollController.dispose();
-    _audioPlayer.dispose(); // Dispose the audio player
+    _textFocusNode.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -1021,76 +1024,126 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
           const SizedBox(height: 8),
 
-          // ---- Status label under mic ----
-          Text(
-            isMicBlocked
-                ? (_isTtsPlaying ? 'AI is speaking...' : 'Thinking...')
-                : (_isListening ? 'Tap to send' : 'Tap to speak'),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: isMicBlocked
-                  ? Colors.grey.shade400
-                  : (_isListening ? Colors.red : textGrey),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // ---- Text fallback row (secondary, slim) ----
+          // ---- Status label + keyboard toggle icon ----
           Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Expanded(
-                child: Container(
-                  height: 42,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: softBackground,
-                    borderRadius: BorderRadius.circular(21),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: TextField(
-                    controller: _controller,
-                    style: TextStyle(color: textDark, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'Or type here...',
-                      hintStyle: TextStyle(
-                        color: textGrey.withOpacity(0.5),
-                        fontSize: 13,
-                      ),
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 11),
-                    ),
-                    onSubmitted: _sendMessage,
-                  ),
+              Text(
+                isMicBlocked
+                    ? (_isTtsPlaying ? 'AI is speaking...' : 'Thinking...')
+                    : (_isListening ? 'Tap to send' : 'Tap to speak'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: isMicBlocked
+                      ? Colors.grey.shade400
+                      : (_isListening ? Colors.red : textGrey),
                 ),
               ),
-              const SizedBox(width: 10),
-              // Send button for text input
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _controller,
-                builder: (_, value, __) {
-                  final hasText = value.text.trim().isNotEmpty;
-                  return AnimatedOpacity(
-                    duration: const Duration(milliseconds: 150),
-                    opacity: hasText ? 1.0 : 0.3,
-                    child: GestureDetector(
-                      onTap: hasText ? () => _sendMessage(_controller.text) : null,
-                      child: CircleAvatar(
-                        radius: 20,
-                        backgroundColor: primaryPurple,
-                        child: const Icon(
-                          Icons.arrow_upward_rounded,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                      ),
+              if (!isMicBlocked && !_isListening) ...[
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _showTextInput = !_showTextInput);
+                    if (_showTextInput) {
+                      Future.delayed(const Duration(milliseconds: 150), () {
+                        _textFocusNode.requestFocus();
+                      });
+                    } else {
+                      _textFocusNode.unfocus();
+                    }
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: _showTextInput
+                          ? primaryPurple.withOpacity(0.15)
+                          : Colors.grey.shade100,
+                      shape: BoxShape.circle,
                     ),
-                  );
-                },
-              ),
+                    child: Icon(
+                      _showTextInput ? Icons.close_rounded : Icons.keyboard_alt_outlined,
+                      size: 16,
+                      color: _showTextInput ? primaryPurple : Colors.grey.shade500,
+                    ),
+                  ),
+                ),
+              ],
             ],
+          ),
+
+          // ---- Slide-in text input (AnimatedSize) ----
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+            child: _showTextInput
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 44,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: softBackground,
+                              borderRadius: BorderRadius.circular(22),
+                              border: Border.all(color: primaryPurple.withOpacity(0.3)),
+                            ),
+                            child: TextField(
+                              controller: _controller,
+                              focusNode: _textFocusNode,
+                              style: TextStyle(color: textDark, fontSize: 14),
+                              decoration: InputDecoration(
+                                hintText: 'Type your message...',
+                                hintStyle: TextStyle(
+                                  color: textGrey.withOpacity(0.5),
+                                  fontSize: 13,
+                                ),
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                              onSubmitted: (text) {
+                                _sendMessage(text);
+                                setState(() => _showTextInput = false);
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: _controller,
+                          builder: (_, value, __) {
+                            final hasText = value.text.trim().isNotEmpty;
+                            return AnimatedOpacity(
+                              duration: const Duration(milliseconds: 150),
+                              opacity: hasText ? 1.0 : 0.3,
+                              child: GestureDetector(
+                                onTap: hasText
+                                    ? () {
+                                        _sendMessage(_controller.text);
+                                        setState(() => _showTextInput = false);
+                                      }
+                                    : null,
+                                child: CircleAvatar(
+                                  radius: 21,
+                                  backgroundColor: primaryPurple,
+                                  child: const Icon(
+                                    Icons.arrow_upward_rounded,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
