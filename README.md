@@ -9,7 +9,7 @@ Built with **Flutter** (frontend) and **Python FastAPI** (backend).
 ## Features
 
 ### AI Chatbot
-- Voice-first conversational practice powered by **Groq API** (LLaMA 3.1)
+- Voice-first conversational practice powered by **Ollama** (Llama 3.2 3B)
 - Speak via microphone or type — responses are generated in real-time
 - Built-in **homophone correction** engine for more accurate speech-to-text
 
@@ -26,8 +26,12 @@ Built with **Flutter** (frontend) and **Python FastAPI** (backend).
 - Filler words highlighted directly in the annotated transcript
 
 ### Grammar Analysis
-- Text is checked via an external grammar API
+- Text is checked via a custom **Cloud Run Grammar API**
 - Shows original vs corrected text, per-mistake cards with severity, suggestions, and category breakdown
+
+### Accent Analysis
+- Custom **Accent Engine** backend for pronunciation assessment
+- Compares user speech against standard pronunciation models
 
 ### Dashboard & Gamification
 - Personalized home screen with progress stats (fluency, grammar, vocabulary)
@@ -50,10 +54,11 @@ Built with **Flutter** (frontend) and **Python FastAPI** (backend).
 | Layer | Technology |
 |-------|------------|
 | **Frontend** | Flutter (Dart) |
-| **AI Chat** | Groq API (LLaMA 3.1 8B) |
-| **Live STT** | Deepgram (streaming), Sherpa-ONNX (on-device) |
+| **AI Chat** | Ollama (Llama 3.2 3B) |
+| **Live STT** | Deepgram (streaming) |
 | **Fluency Backend** | Python FastAPI, OpenAI Whisper, spaCy |
-| **Grammar** | External grammar checking API |
+| **Accent Backend** | Python FastAPI, Torchaudio |
+| **Grammar** | Custom Cloud Run API |
 | **Auth & Storage** | Firebase Auth, Cloud Firestore |
 | **Deployment** | Google Cloud Run (backend), Docker |
 
@@ -70,7 +75,7 @@ lib/
 │   ├── forgot_password_screen.dart     # Password reset
 │   ├── home_screen.dart                # Dashboard with stats & gamification
 │   ├── profile_screen.dart             # User profile
-│   ├── chat_screen.dart                # AI chatbot (Groq + voice input)
+│   ├── chat_screen.dart                # AI chatbot (Ollama + voice input)
 │   ├── timed_presentation_screen.dart  # Timed speaking practice (Deepgram)
 │   ├── fluency_screen.dart             # Fluency analysis report
 │   ├── grammar_report_screen.dart      # Grammar analysis report
@@ -90,6 +95,11 @@ fluency_engine/                         # Python backend
 ├── requirements.txt                    # Python dependencies
 ├── Dockerfile                          # Container config
 └── README.md                           # Deployment guide
+
+Accent_engine/                          # Python backend for pronunciation
+├── main.py                             # FastAPI server
+├── requirements.txt                    # Python dependencies
+└── ...
 ```
 
 ---
@@ -118,9 +128,15 @@ flutterfire configure
 ### 3. Environment Variables
 Copy `.env.example` to `.env` and fill in your keys:
 ```
-GROQ_API_KEY=your_groq_api_key
 STT=your_deepgram_api_key
 FLUENCY_API_URL=https://your-cloud-run-url.run.app
+OLLAMA_URL=http://192.168.x.x:11434/api/chat
+```
+
+### 3.5. Setup Ollama
+Ensure you have Ollama installed and the `llama3.2:3b` model downloaded:
+```bash
+ollama run llama3.2:3b
 ```
 
 ### 4. Run the App

@@ -10,6 +10,10 @@ import '../models/scenario.dart';
 import '../services/ollama_api_service.dart';
 import '../services/fluency_api_service.dart';
 import '../services/grammar_api_service.dart';
+import '../services/tts_api_service.dart';
+import '../services/my_audio_source.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:audio_session/audio_session.dart';
 import 'unified_report_screen.dart';
 
 class ScenarioChatScreen extends StatefulWidget {
@@ -43,6 +47,11 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   String _fullTranscript = '';
   String _currentSegment = '';
 
+  // TTS variables
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  String _selectedAccent = 'american';
+  bool _isTtsPlaying = false; // True while AI audio is playing — blocks mic to prevent audio session conflict
+
   // Background Analysis Variables
   IOSink? _audioFileSink;
   StreamSubscription<List<int>>? _audioStreamSubscription;
@@ -71,6 +80,43 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
     final sttKey = dotenv.env['STT'] ?? '';
     _deepgram = Deepgram(sttKey);
+
+    _initAudioSession().then((_) {
+      // Pre-warm the Grammar API Cloud Run instance in the background so it's
+      // ready by the time the conversation ends. Fire-and-forget; errors are ignored.
+      GrammarApiService.analyzeText('warmup').catchError((_) {});
+
+      // Play the initial AI greeting after the audio session is fully ready.
+      // NOTE: _isTtsPlaying is managed exclusively inside _playAiResponse via
+      // try/finally. Do NOT add a playerStateStream listener here — it fires
+      // immediately with playing=false (player is idle) and would race-reset the flag.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _playAiResponse(widget.scenario.initialGreeting);
+        }
+      });
+    });
+  }
+
+  Future<void> _initAudioSession() async {
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration(
+      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+      avAudioSessionCategoryOptions:
+          AVAudioSessionCategoryOptions.allowBluetooth |
+          AVAudioSessionCategoryOptions.defaultToSpeaker,
+      avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      avAudioSessionRouteSharingPolicy:
+          AVAudioSessionRouteSharingPolicy.defaultPolicy,
+      avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+      androidAudioAttributes: AndroidAudioAttributes(
+        contentType: AndroidAudioContentType.speech,
+        flags: AndroidAudioFlags.none,
+        usage: AndroidAudioUsage.voiceCommunication,
+      ),
+      androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransient,
+      androidWillPauseWhenDucked: true,
+    ));
   }
 
   void _sendMessage(String text) async {
@@ -124,6 +170,9 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
             "isVisible": true,
             "timestamp": DateTime.now(),
           });
+          
+          // trigger TTS playback silently
+          _playAiResponse(response);
         }
         _isLoading = false;
         if (isFinished) {
@@ -145,6 +194,30 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     }
   }
 
+  Future<void> _playAiResponse(String text) async {
+    if (mounted) setState(() => _isTtsPlaying = true);
+    try {
+      final audioBytes = await TtsApiService.synthesize(
+        text: text,
+        accent: _selectedAccent,
+      );
+
+      // Load bytes into just_audio player
+      await _audioPlayer.setAudioSource(MyAudioSource(audioBytes));
+      await _audioPlayer.play();
+
+      // Wait for playback to actually finish before releasing the lock
+      await _audioPlayer.playerStateStream.firstWhere(
+        (s) => s.processingState == ProcessingState.completed || !s.playing,
+      );
+    } catch (e) {
+      debugPrint('[TTS Error] Failed to generate/play audio: $e');
+      // Don't show a snackbar for TTS failures — the conversation should still work
+    } finally {
+      if (mounted) setState(() => _isTtsPlaying = false);
+    }
+  }
+
   Future<bool> _checkPermission() async {
     PermissionStatus status = await Permission.microphone.request();
     return status.isGranted;
@@ -154,6 +227,19 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     if (_isListening) {
       await _stopListening();
     } else {
+      // Bug fix: Block mic while AI is speaking to prevent audio session conflict
+      if (_isTtsPlaying) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please wait for AI to finish speaking first.'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
       await _startListening();
     }
   }
@@ -188,22 +274,15 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _audioFileSink = audioFile.openWrite();
       _writeWavHeader(_audioFileSink!, 0);
 
-      final stream = await _recorder.startStream(
-        const RecordConfig(
-          encoder: AudioEncoder.pcm16bits,
-          sampleRate: 16000,
-          numChannels: 1,
-        ),
-      );
+      // Bug fix: Create Deepgram listener FIRST (using a dummy placeholder stream),
+      // then wait for the WebSocket to open, THEN start the recorder.
+      // Previously, the recorder started before Deepgram was ready, dropping the first syllable.
 
-      final broadcastStream = stream.asBroadcastStream();
-
-      _audioStreamSubscription = broadcastStream.listen((audioData) {
-        _audioFileSink?.add(audioData);
-      });
+      // We need a broadcast stream. Use a StreamController to bridge recorder → Deepgram.
+      final audioController = StreamController<List<int>>.broadcast();
 
       _liveListener = _deepgram.listen.liveListener(
-        broadcastStream,
+        audioController.stream,
         queryParams: {
           'model': 'nova-2-general',
           'punctuate': false,
@@ -224,24 +303,42 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
               } else {
                 _currentSegment = result.transcript!;
               }
-              // Removed injecting transcript into the text controller.
-              // It will be handled in the UI as a floating bubble or overlay.
             });
-            // Ensure we scroll to the bottom after the UI updates with the new transcript text
             _scrollToBottom();
           }
         },
         onError: (error) {
           debugPrint('Deepgram error: $error');
+          audioController.close();
           _stopListening();
         },
       );
 
+      // Start Deepgram WebSocket handshake FIRST
       _liveListener!.start();
 
-      // IMPORTANT: Give the Deepgram WebSocket 300ms to fully open and connect
-      // *before* we start speaking, otherwise the first word might get sent into the void.
-      await Future.delayed(const Duration(milliseconds: 300));
+      // Wait for WebSocket to fully open before audio starts flowing
+      await Future.delayed(const Duration(milliseconds: 400));
+
+      // NOW start the microphone recorder
+      final stream = await _recorder.startStream(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
+      );
+
+      // Pipe recorder audio into both the WAV file and the Deepgram WebSocket
+      _audioStreamSubscription = stream.listen((audioData) {
+        _audioFileSink?.add(audioData);
+        if (!audioController.isClosed) {
+          audioController.add(audioData);
+        }
+      }, onDone: () {
+        audioController.close();
+      });
+
     } catch (e) {
       debugPrint('Error starting listener: $e');
       _stopListening();
@@ -546,6 +643,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     _audioFileSink?.close();
     _controller.dispose();
     _scrollController.dispose();
+    _audioPlayer.dispose(); // Dispose the audio player
     super.dispose();
   }
 
@@ -581,15 +679,88 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
           ],
         ),
         actions: [
+          // ACCENT SELECTION DROPDOWN (Improved UI)
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0, top: 8.0, bottom: 8.0),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: secondaryPurple.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: primaryPurple.withOpacity(0.5)),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedAccent,
+                  icon: Icon(Icons.arrow_drop_down, color: primaryPurple, size: 20),
+                  dropdownColor: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  alignment: Alignment.center,
+                  style: TextStyle(
+                    color: primaryPurple, 
+                    fontWeight: FontWeight.w600, 
+                    fontSize: 13
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: 'american', 
+                      child: Row(
+                        children: const [
+                          Text("🇺🇸", style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text("US"),
+                        ],
+                      )
+                    ),
+                    DropdownMenuItem(
+                      value: 'british', 
+                      child: Row(
+                        children: const [
+                          Text("🇬🇧", style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text("UK"),
+                        ],
+                      )
+                    ),
+                    DropdownMenuItem(
+                      value: 'pakistani', 
+                      child: Row(
+                        children: const [
+                          Text("🇵🇰", style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text("PK"),
+                        ],
+                      )
+                    ),
+                  ],
+                  onChanged: (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedAccent = newValue;
+                      });
+                    }
+                  },
+                ),
+              ),
+            ),
+          ),
           if (!_isFinished)
-            TextButton(
-              onPressed: _endConversation,
-              child: const Text(
-                "End Session",
-                style: TextStyle(
-                  color: Colors.redAccent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
+            Padding(
+              padding: const EdgeInsets.only(right: 4.0),
+              child: TextButton(
+                onPressed: _endConversation,
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.red.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                child: const Text(
+                  "End",
+                  style: TextStyle(
+                    color: Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
               ),
             ),
@@ -848,22 +1019,30 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       ),
       child: Row(
         children: [
-          InkWell(
-            onTap: _toggleRecording,
-            borderRadius: BorderRadius.circular(30),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color:
-                    _isListening
-                        ? Colors.red.withOpacity(0.2)
-                        : secondaryPurple.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                _isListening ? Icons.mic : Icons.mic_rounded,
-                color: _isListening ? Colors.red : primaryPurple,
-                size: 24,
+          Tooltip(
+            message: _isTtsPlaying ? 'Wait for AI to finish speaking' : (_isListening ? 'Tap to stop' : 'Tap to speak'),
+            child: InkWell(
+              onTap: _toggleRecording,
+              borderRadius: BorderRadius.circular(30),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _isTtsPlaying
+                      ? Colors.grey.withOpacity(0.15)
+                      : (_isListening
+                          ? Colors.red.withOpacity(0.2)
+                          : secondaryPurple.withOpacity(0.3)),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _isTtsPlaying
+                      ? Icons.volume_up_rounded
+                      : (_isListening ? Icons.mic : Icons.mic_rounded),
+                  color: _isTtsPlaying
+                      ? Colors.grey
+                      : (_isListening ? Colors.red : primaryPurple),
+                  size: 24,
+                ),
               ),
             ),
           ),

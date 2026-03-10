@@ -5,6 +5,7 @@ import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
 import 'package:lingua_franca/screens/native_stt_screen_test.dart';
+import 'package:lingua_franca/screens/accent_test_screen.dart';
 
 import 'chat_screen_test.dart';
 
@@ -164,6 +165,38 @@ class DevelopersScreen extends StatelessWidget {
                           Icon(Icons.mic_none, size: 24),
                           SizedBox(width: 8),
                           Text('Test deepgram'),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Test TTS Engine Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const AccentTestScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6B72AB),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.record_voice_over, size: 24),
+                          SizedBox(width: 8),
+                          Text('Test TTS Engine'),
                         ],
                       ),
                     ),
