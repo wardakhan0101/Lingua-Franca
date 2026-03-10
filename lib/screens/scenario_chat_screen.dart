@@ -778,8 +778,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
                       left: 16,
                       right: 16,
                       top: 20,
-                      bottom:
-                          _isListening ? 220 : 20, // Add space for floating mic
+                      bottom: 20,
                     ),
                     itemCount:
                         visibleMessages.length +
@@ -851,9 +850,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
                 _buildInputArea(),
               ],
             ),
-
-            // Build the floating microphone overlay
-            if (_isListening) _buildListeningOverlay(),
           ],
         ),
       ),
@@ -926,57 +922,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     );
   }
 
-  // Floating microphone UI matching the mockup, but without blurred background
-  Widget _buildListeningOverlay() {
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 80, // Keep input area accessible
-      child: GestureDetector(
-        onTap: _toggleRecording, // Tap mic to stop
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Pulsing mic circle
-            Container(
-              width: 140,
-              height: 140,
-              decoration: BoxDecoration(
-                color: primaryPurple.withAlpha(
-                  (255 * 0.15).toInt(),
-                ), // Very subtle outer circle
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: primaryPurple.withAlpha(
-                      (255 * 0.6).toInt(),
-                    ), // Inner darker circle
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.mic, color: Colors.white, size: 48),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              "Listening...",
-              style: TextStyle(
-                color: primaryPurple,
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                fontStyle: FontStyle.italic,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildInputArea() {
     if (_isFinished) {

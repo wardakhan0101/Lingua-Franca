@@ -726,8 +726,8 @@ class HomeScreen extends StatelessWidget {
                     scenario: const Scenario(
                       id: "job_interview_1",
                       title: "Job Interview",
-                      systemPrompt: "You are a professional but friendly HR interviewer at a reputable tech company. You are interviewing the user for a Software Engineer role. Keep every response to 1 short sentence (under 12 words). Ask one question at a time. Start with a brief welcome. After 5–6 exchanges when you have enough information, wrap up politely and output the exact phrase [END_CONVERSATION] at the end of your final message.",
-                      initialGreeting: "Welcome! Please tell me a little about yourself.",
+                      systemPrompt: "You are a senior HR manager at a reputable tech company conducting a real job interview for a junior Software Engineer role. Ask realistic behavioural and technical questions one at a time (e.g. 'Tell me about a challenging project', 'How do you handle deadlines?', 'Describe a conflict with a teammate'). Keep each response/question to 1 sentence (under 12 words). React naturally to the candidate's answers — ask a brief follow-up if their answer is vague. After 8-10 exchanges, thank them professionally, tell them the team will be in touch, then output the exact phrase [END_CONVERSATION] at the very end.",
+                      initialGreeting: "Hello! Thanks for coming in. Please take a seat.",
                     ),
                   )),
                 );
