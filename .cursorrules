@@ -13,3 +13,5 @@
 6. **Validate Against The User's Real-World Testing Methods**: Don't just assume code works because it looks right or passes a basic unit test. The user has specific, real-world ways they test features (e.g., using physical devices like a Redmi Note 14 for the step counter, or pre-recorded audio sentences for the fluency engine). Always ask the user how they intend to test the change in their physical environment or with their real data, and ensure the code is ready for *that* specific type of testing before declaring it "done."
 
 7. **Ignore Test Screens**: Ignore screens in the `lib/screens/` folder that have the word "test" in their names (e.g., `timed_presentation_test.dart`). These screens are only available in the developer screen and were developed in the very early stages of this app. Do not attempt to modify, refactor, or use them as a reference.
+
+8. **Ignored Technologies**: Please ignore any instances or suggestions related to groq AI, sherpa onnx, and native stt. Do not recommend or implement solutions using these.
