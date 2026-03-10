@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';import '../services/analysis_storage_serv
 
 class FluencyScreen extends StatefulWidget {
   final Map<String, dynamic> fluencyData;
-  final String audioPath; // Path to the recorded user audio
+  final String? audioPath; // Path to the recorded user audio
 
   const FluencyScreen({super.key, required this.fluencyData, required this.audioPath});
 
@@ -216,11 +216,13 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
   // Store the analysis results in Firebase
   Future<void> _storeAnalysisResults() async {
     try {
-      await _storageService.storeFluencyAnalysis(
-        transcript: _transcript,
-        fluencyIssues: _fluencyIssues,
-        audioPath: widget.audioPath,
-      );
+      if (widget.audioPath != null) {
+        await _storageService.storeFluencyAnalysis(
+          transcript: _transcript,
+          fluencyIssues: _fluencyIssues,
+          audioPath: widget.audioPath!,
+        );
+      }
     } catch (e) {
       debugPrint("Failed to store fluency analysis in Firebase: $e");
       // Don't show error to user, just log it

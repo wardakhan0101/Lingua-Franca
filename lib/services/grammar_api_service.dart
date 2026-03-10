@@ -1,13 +1,18 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class GrammarApiService {
   // 🌐 Your deployed Cloud Run API
-  static const String baseUrl = 'https://grammar-checker-702584631438.us-central1.run.app';
+  static const String baseUrl =
+      'https://grammar-checker-702584631438.us-central1.run.app';
 
   /// Analyze text for grammar mistakes
   static Future<GrammarAnalysisResult> analyzeText(String text) async {
     try {
+      debugPrint('==== GRAMMAR API REQUEST ====');
+      debugPrint('Payload text: "$text"');
+
       final url = Uri.parse('$baseUrl/analyze');
 
       final response = await http.post(
@@ -17,9 +22,13 @@ class GrammarApiService {
       );
 
       if (response.statusCode == 200) {
+        debugPrint('==== GRAMMAR API RESPONSE ====');
+        debugPrint(response.body);
         final data = jsonDecode(response.body);
         return GrammarAnalysisResult.fromJson(data);
       } else {
+        debugPrint('==== GRAMMAR API ERROR ====');
+        debugPrint(response.statusCode.toString());
         throw Exception('Failed to analyze text: ${response.statusCode}');
       }
     } catch (e) {
@@ -51,11 +60,15 @@ class GrammarAnalysisResult {
     return GrammarAnalysisResult(
       originalText: json['original_text'] ?? '',
       correctedText: json['corrected_text'] ?? '',
-      mistakes: (json['mistakes'] as List?)
-          ?.map((m) => GrammarMistake.fromJson(m))
-          .toList() ?? [],
+      mistakes:
+          (json['mistakes'] as List?)
+              ?.map((m) => GrammarMistake.fromJson(m))
+              .toList() ??
+          [],
       summary: GrammarSummary.fromJson(json['summary'] ?? {}),
-      mistakeCategories: Map<String, int>.from(json['mistake_categories'] ?? {}),
+      mistakeCategories: Map<String, int>.from(
+        json['mistake_categories'] ?? {},
+      ),
       message: json['message'] ?? '',
     );
   }
