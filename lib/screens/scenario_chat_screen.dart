@@ -1004,80 +1004,149 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       );
     }
 
+    final bool isMicBlocked = _isTtsPlaying || _isLoading;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
+          // ---- MIC BUTTON (Hero) ----
           Tooltip(
-            message: _isTtsPlaying ? 'Wait for AI to finish speaking' : (_isListening ? 'Tap to stop' : 'Tap to speak'),
-            child: InkWell(
-              onTap: _toggleRecording,
-              borderRadius: BorderRadius.circular(30),
-              child: Container(
-                padding: const EdgeInsets.all(10),
+            message: isMicBlocked
+                ? (_isTtsPlaying ? 'Wait for AI to finish speaking' : 'Generating response...')
+                : (_isListening ? 'Tap to send' : 'Tap to speak'),
+            child: GestureDetector(
+              onTap: isMicBlocked ? null : _toggleRecording,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 80,
+                height: 80,
                 decoration: BoxDecoration(
-                  color: _isTtsPlaying
-                      ? Colors.grey.withOpacity(0.15)
-                      : (_isListening
-                          ? Colors.red.withOpacity(0.2)
-                          : secondaryPurple.withOpacity(0.3)),
                   shape: BoxShape.circle,
+                  color: isMicBlocked
+                      ? Colors.grey.shade200
+                      : (_isListening
+                          ? Colors.red.withOpacity(0.15)
+                          : primaryPurple.withOpacity(0.1)),
                 ),
-                child: Icon(
-                  _isTtsPlaying
-                      ? Icons.volume_up_rounded
-                      : (_isListening ? Icons.mic : Icons.mic_rounded),
-                  color: _isTtsPlaying
-                      ? Colors.grey
-                      : (_isListening ? Colors.red : primaryPurple),
-                  size: 24,
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isMicBlocked
+                          ? Colors.grey.shade300
+                          : (_isListening ? Colors.red : primaryPurple),
+                      boxShadow: isMicBlocked
+                          ? []
+                          : [
+                              BoxShadow(
+                                color: (_isListening ? Colors.red : primaryPurple)
+                                    .withOpacity(0.35),
+                                blurRadius: 14,
+                                spreadRadius: 2,
+                              ),
+                            ],
+                    ),
+                    child: Icon(
+                      isMicBlocked
+                          ? (_isTtsPlaying ? Icons.volume_up_rounded : Icons.hourglass_top_rounded)
+                          : (_isListening ? Icons.stop_rounded : Icons.mic_rounded),
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: softBackground,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: TextField(
-                controller: _controller,
-                style: TextStyle(color: textDark),
-                decoration: InputDecoration(
-                  hintText: 'Write your message or speak',
-                  hintStyle: TextStyle(color: textGrey.withOpacity(0.6)),
-                  border: InputBorder.none,
-                ),
-                onSubmitted: _sendMessage,
-              ),
+
+          const SizedBox(height: 8),
+
+          // ---- Status label under mic ----
+          Text(
+            isMicBlocked
+                ? (_isTtsPlaying ? 'AI is speaking...' : 'Thinking...')
+                : (_isListening ? 'Tap to send' : 'Tap to speak'),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: isMicBlocked
+                  ? Colors.grey.shade400
+                  : (_isListening ? Colors.red : textGrey),
             ),
           ),
-          const SizedBox(width: 12),
-          InkWell(
-            onTap: () => _sendMessage(_controller.text),
-            child: CircleAvatar(
-              backgroundColor: primaryPurple,
-              radius: 22,
-              child: const Icon(
-                Icons.send_rounded,
-                color: Colors.white,
-                size: 20,
+
+          const SizedBox(height: 16),
+
+          // ---- Text fallback row (secondary, slim) ----
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 42,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: softBackground,
+                    borderRadius: BorderRadius.circular(21),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: TextField(
+                    controller: _controller,
+                    style: TextStyle(color: textDark, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'Or type here...',
+                      hintStyle: TextStyle(
+                        color: textGrey.withOpacity(0.5),
+                        fontSize: 13,
+                      ),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                    ),
+                    onSubmitted: _sendMessage,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 10),
+              // Send button for text input
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _controller,
+                builder: (_, value, __) {
+                  final hasText = value.text.trim().isNotEmpty;
+                  return AnimatedOpacity(
+                    duration: const Duration(milliseconds: 150),
+                    opacity: hasText ? 1.0 : 0.3,
+                    child: GestureDetector(
+                      onTap: hasText ? () => _sendMessage(_controller.text) : null,
+                      child: CircleAvatar(
+                        radius: 20,
+                        backgroundColor: primaryPurple,
+                        child: const Icon(
+                          Icons.arrow_upward_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ],
       ),
