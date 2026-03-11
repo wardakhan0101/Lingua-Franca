@@ -7,12 +7,14 @@ class UnifiedReportScreen extends StatelessWidget {
   final GrammarAnalysisResult grammarResult;
   final Map<String, dynamic> fluencyResult;
   final String? audioPath;
+  final int earnedXp;
 
   const UnifiedReportScreen({
     super.key,
     required this.grammarResult,
     required this.fluencyResult,
     required this.audioPath,
+    this.earnedXp = 0,
   });
 
   @override
@@ -43,8 +45,8 @@ class UnifiedReportScreen extends StatelessWidget {
         ),
         body: TabBarView(
           children: [
-            GrammarReportScreen(result: grammarResult),
-            FluencyScreen(fluencyData: fluencyResult, audioPath: audioPath),
+            GrammarReportScreen(result: grammarResult, earnedXp: earnedXp),
+            FluencyScreen(fluencyData: fluencyResult, audioPath: audioPath ?? '', earnedXp: earnedXp),
           ],
         ),
       ),

@@ -12,6 +12,7 @@ import '../services/fluency_api_service.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
 import 'unified_report_screen.dart';
+import '../services/gamification_service.dart';
 
 final stt = dotenv.env['STT'];
 
@@ -29,6 +30,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
   Deepgram? _deepgram;
   DeepgramLiveListener? _liveListener;
   StreamSubscription? _deepgramSubscription;
+  final GamificationService _gamificationService = GamificationService();
 
   final TextEditingController _textController = TextEditingController();
   late ScrollController _scrollController =
@@ -53,9 +55,15 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
   @override
   void initState() {
     super.initState();
-    _deepgram = Deepgram(stt!);
+    if (stt != null) {
+      _deepgram = Deepgram(stt!);
+    }
     _textController.text = 'Your speech will appear here...';
-    _scrollController = ScrollController(); // NEW: Initialize
+    _scrollController = ScrollController();
+
+    // Warm up the Cloud Run APIs in the background.
+    GrammarApiService.analyzeText('warmup').catchError((_) {});
+    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) {});
   }
 
   // --- Logic ---
@@ -482,6 +490,19 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
       final grammarResult = results[0] as GrammarAnalysisResult;
       final fluencyResult = results[1] as Map<String, dynamic>;
 
+      // 3. GAMIFICATION: Calculate and Save XP
+      int calculatedXp = 0;
+      try {
+        final xpResults = await _gamificationService.updateSessionXp(
+          grammarResult: grammarResult,
+          fluencyData: fluencyResult,
+          durationSeconds: _elapsedSeconds,
+        );
+        calculatedXp = xpResults['earnedXp'] ?? 0;
+      } catch (e) {
+        debugPrint("Gamification Error: $e");
+      }
+
       if (mounted) {
         Navigator.push(
           context,
@@ -491,6 +512,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
                   grammarResult: grammarResult,
                   fluencyResult: fluencyResult,
                   audioPath: pathToUse,
+                  earnedXp: calculatedXp,
                 ),
           ),
         );

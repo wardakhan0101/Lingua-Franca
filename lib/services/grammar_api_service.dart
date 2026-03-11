@@ -19,8 +19,8 @@ class GrammarApiService {
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'text': text}),
-      ).timeout(const Duration(seconds: 60), onTimeout: () {
-        throw Exception('Grammar API timed out after 60 seconds (Cloud Run cold start?)');
+      ).timeout(const Duration(seconds: 90), onTimeout: () {
+        throw Exception('Grammar API timed out after 90 seconds (Cloud Run cold start?)');
       });
 
       if (response.statusCode == 200) {

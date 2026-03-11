@@ -3,7 +3,11 @@ import 'package:lingua_franca/screens/developers_screen.dart';
 import 'package:lingua_franca/screens/profile_screen.dart';
 import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import '../models/scenario.dart';
+import '../services/gamification_service.dart';
+import '../services/grammar_api_service.dart';
+import '../services/fluency_api_service.dart';
 import 'scenario_chat_screen.dart';
+import 'accent_test_screen.dart';
 
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
@@ -91,11 +95,55 @@ class GradientCircularProgress extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final GamificationService _gamificationService = GamificationService();
+  Map<String, dynamic> _userStats = {};
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserStats();
+    // Warm up the Cloud Run APIs in the background.
+    // This wakes up the servers before the user actually starts a session.
+    GrammarApiService.analyzeText('warmup').catchError((_) {});
+    // Fluency API can also be warmed up by sending a small/invalid request
+    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) {});
+  }
+
+  Future<void> _loadUserStats() async {
+    try {
+      final stats = await _gamificationService.getUserStats();
+      setState(() {
+        _userStats = stats;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint("Error loading stats: $e");
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: Color(0xFF8A48F0))),
+      );
+    }
+
+    final int totalXp = _userStats['totalXp'] ?? 0;
+    final int streak = _userStats['currentStreak'] ?? 0;
+    final String level = _userStats['currentLevel'] ?? 'B1';
+    final List<String> badges = List<String>.from(_userStats['badges'] ?? []);
+
     // Brand Colors
     final Color primaryPurple = const Color(0xFF8A48F0);
     final Color softBackground = const Color(0xFFF7F7FA);
@@ -105,74 +153,97 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: softBackground,
       bottomNavigationBar: _buildBottomNavBar(context, primaryPurple),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(context, primaryPurple, textDark),
-                const SizedBox(height: 24),
-                _buildWelcomeBanner(primaryPurple),
-                const SizedBox(height: 24),
+      body: RefreshIndicator(
+        onRefresh: _loadUserStats,
+        color: primaryPurple,
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context, primaryPurple, textDark, streak, totalXp),
+                  const SizedBox(height: 24),
+                  _buildWelcomeBanner(primaryPurple, level),
+                  const SizedBox(height: 24),
 
-                // Progress Card (Shows 0% - New User State)
-                _buildProgressCard(primaryPurple, textDark, textGrey),
+                  // Progress Card (Dynamic)
+                  _buildProgressCard(primaryPurple, textDark, textGrey, totalXp, level),
 
-                const SizedBox(height: 24),
+                  const SizedBox(height: 24),
 
-                // MAIN ACTION - This is the only "Active" looking button
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
-                    onPressed: () => _showPracticeModeSelection(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryPurple,
-                      foregroundColor: Colors.white,
-                      elevation: 8,
-                      shadowColor: primaryPurple.withOpacity(0.5),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                  // MAIN ACTION - This is the only "Active" looking button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: () => _showPracticeModeSelection(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryPurple,
+                        foregroundColor: Colors.white,
+                        elevation: 8,
+                        shadowColor: primaryPurple.withOpacity(0.5),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
-                    ),
-                    child: const Text(
-                      'Start Conversation',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
+                      child: const Text(
+                        'Start Conversation',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
                       ),
                     ),
                   ),
-                ),
 
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (context) => const AccentTestScreen()),
+                      ),
+                      icon: const Icon(Icons.record_voice_over),
+                      label: const Text('Test TTS Engine'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: primaryPurple,
+                        side: BorderSide(color: primaryPurple),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ),
+                  ),
 
-                const SizedBox(height: 32),
+                  const SizedBox(height: 32),
 
-                // UNIMPLEMENTED SECTION 1: Streak (Greyed Out)
-                _buildSectionTitle('Weekly Practice Streak', textDark),
-                const SizedBox(height: 16),
-                _buildStreakRow(Colors.white),
+                  // UNIMPLEMENTED SECTION 1: Streak (Dynamic)
+                  _buildSectionTitle('Weekly Practice Streak', textDark),
+                  const SizedBox(height: 16),
+                  _buildStreakRow(Colors.white, streak),
 
-                const SizedBox(height: 32),
+                  const SizedBox(height: 32),
 
-                // UNIMPLEMENTED SECTION 2: Achievements (Locked)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildSectionTitle('Your Achievements', textDark),
-                    // "View All" is grey to suggest disabled
-                    Text("View All", style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.bold, fontSize: 12)),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _buildAchievementsRow(Colors.white),
+                  // UNIMPLEMENTED SECTION 2: Achievements (Dynamic)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildSectionTitle('Your Achievements', textDark),
+                      // "View All" is grey to suggest disabled
+                      Text("View All", style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.bold, fontSize: 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildAchievementsRow(Colors.white, badges),
 
-                const SizedBox(height: 40),
-              ],
+                  const SizedBox(height: 40),
+                ],
+              ),
             ),
           ),
         ),
@@ -182,7 +253,7 @@ class HomeScreen extends StatelessWidget {
 
   // --- WIDGET COMPONENTS ---
 
-  Widget _buildHeader(BuildContext context, Color primary, Color textDark) {
+  Widget _buildHeader(BuildContext context, Color primary, Color textDark, int streak, int xp) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -210,7 +281,7 @@ class HomeScreen extends StatelessWidget {
                   // 🔥 RESTORED COLOR: Red/Orange for Fire
                   const Icon(Icons.local_fire_department_rounded, color: Color(0xFFFF512F), size: 18),
                   const SizedBox(width: 4),
-                  Text('0', style: TextStyle(fontWeight: FontWeight.bold, color: textDark, fontSize: 12)),
+                  Text('$streak', style: TextStyle(fontWeight: FontWeight.bold, color: textDark, fontSize: 12)),
                 ],
               ),
             ),
@@ -228,7 +299,7 @@ class HomeScreen extends StatelessWidget {
                   // ⚡ RESTORED COLOR: Gold for Lightning
                   const Icon(Icons.flash_on_rounded, color: Color(0xFFFFD700), size: 18),
                   const SizedBox(width: 4),
-                  Text('0', style: TextStyle(fontWeight: FontWeight.bold, color: textDark, fontSize: 12)),
+                  Text('$xp', style: TextStyle(fontWeight: FontWeight.bold, color: textDark, fontSize: 12)),
                 ],
               ),
             ),
@@ -258,7 +329,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildWelcomeBanner(Color primary) {
+  Widget _buildWelcomeBanner(Color primary, String level) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       width: double.infinity,
@@ -311,7 +382,7 @@ class HomeScreen extends StatelessWidget {
               border: Border.all(color: Colors.white),
             ),
             child: Text(
-              'Beginner A1',
+              'Level $level',
               style: TextStyle(
                 color: primary,
                 fontWeight: FontWeight.w700,
@@ -324,10 +395,13 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildProgressCard(Color primary, Color textDark, Color textGrey) {
-    // 0% Progress - New User
-    final double currentProgress = 0.0;
-    final String currentProgressText = '0%';
+  Widget _buildProgressCard(Color primary, Color textDark, Color textGrey, int totalXp, String level) {
+    int threshold = 2500;
+    if (level == 'B2') threshold = 7500;
+    if (level == 'C1') threshold = 15000;
+
+    final double currentProgress = (totalXp / threshold).clamp(0.0, 1.0);
+    final String currentProgressText = '${(currentProgress * 100).toInt()}%';
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -352,6 +426,31 @@ class HomeScreen extends StatelessWidget {
               fontSize: 18,
               fontWeight: FontWeight.bold,
               color: textDark,
+            ),
+          ),
+          const SizedBox(height: 12),
+          // NEW: Horizontal Level Progress Bar
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Level $level Progress',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textGrey),
+              ),
+              Text(
+                '$totalXp / $threshold XP',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: primary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: currentProgress,
+              minHeight: 10,
+              backgroundColor: const Color(0xFFF2F4F7),
+              color: primary,
             ),
           ),
           const SizedBox(height: 24),
@@ -449,8 +548,11 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildStreakRow(Color bg) {
+  Widget _buildStreakRow(Color bg, int currentStreak) {
     final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // For demonstration, let's say the last 'currentStreak' days are active.
+    // In a real app, you'd track which specific days were active.
+    final now = DateTime.now().weekday; // 1 (Mon) to 7 (Sun)
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
@@ -467,15 +569,22 @@ class HomeScreen extends StatelessWidget {
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: days.map((day) {
+        children: List.generate(7, (index) {
+          final dayIndex = index + 1;
+          bool isActive = false;
+          // Simple logic: if streak is 3 and today is Wed (3), highlight Mon, Tue, Wed.
+          if (currentStreak > 0 && dayIndex <= now && dayIndex > (now - currentStreak)) {
+            isActive = true;
+          }
+
           return Column(
             children: [
               Text(
-                day,
+                days[index],
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade400, // Inactive text
+                  color: isActive ? const Color(0xFF8A48F0) : Colors.grey.shade400,
                 ),
               ),
               const SizedBox(height: 10),
@@ -483,23 +592,25 @@ class HomeScreen extends StatelessWidget {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50, // Empty
+                  color: isActive ? const Color(0xFF8A48F0).withOpacity(0.1) : Colors.grey.shade50,
                   shape: BoxShape.circle,
                   border: Border.all(
-                      color: Colors.grey.shade200,
-                      width: 2
+                    color: isActive ? const Color(0xFF8A48F0) : Colors.grey.shade200,
+                    width: 2,
                   ),
                 ),
-                // No Child (Icon) means empty
+                child: isActive
+                  ? const Icon(Icons.check_rounded, color: Color(0xFF8A48F0), size: 20)
+                  : null,
               ),
             ],
           );
-        }).toList(),
+        }),
       ),
     );
   }
 
-  Widget _buildAchievementsRow(Color bg) {
+  Widget _buildAchievementsRow(Color bg, List<String> badges) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -516,34 +627,38 @@ class HomeScreen extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // All Badges are Grey (Locked State)
-          _buildLockedBadge(Icons.star_rounded, 'Master'),
-          _buildLockedBadge(Icons.mic_rounded, 'Pro'),
-          _buildLockedBadge(Icons.emoji_events_rounded, 'Guru'),
-          _buildLockedBadge(Icons.menu_book_rounded, 'Vocab'),
+          _buildBadge(Icons.timer_outlined, 'Iron Lung', badges.contains('Iron Lung')),
+          _buildBadge(Icons.auto_awesome_rounded, 'Grammar Wizard', badges.contains('Grammar Wizard')),
+          _buildBadge(Icons.local_fire_department_rounded, '7 Day Streak', badges.contains('Weekly Warrior')),
+          _buildBadge(Icons.emoji_events_rounded, 'B2 Master', badges.contains('B2 Master')),
         ],
       ),
     );
   }
 
-  Widget _buildLockedBadge(IconData icon, String label) {
+  Widget _buildBadge(IconData icon, String label, bool isUnlocked) {
     return Column(
       children: [
         Container(
           width: 56, height: 56,
           decoration: BoxDecoration(
-            color: Colors.grey.shade100, // Grey background
+            color: isUnlocked ? const Color(0xFFFFD700).withOpacity(0.1) : Colors.grey.shade100,
             shape: BoxShape.circle,
+            border: isUnlocked ? Border.all(color: const Color(0xFFFFD700), width: 2) : null,
           ),
-          child: Icon(icon, color: Colors.grey.shade400, size: 28), // Grey icon
+          child: Icon(icon, color: isUnlocked ? const Color(0xFFD4AF37) : Colors.grey.shade400, size: 28),
         ),
         const SizedBox(height: 8),
-        Text(
-          label,
-          style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade400 // Grey label
+        SizedBox(
+          width: 60,
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: isUnlocked ? const Color(0xFF101828) : Colors.grey.shade400,
+            ),
           ),
         ),
       ],

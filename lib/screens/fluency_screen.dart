@@ -1,13 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
-import 'package:flutter/material.dart';import '../services/analysis_storage_service.dart';
+import 'package:flutter/material.dart';
+import '../services/analysis_storage_service.dart';
 
 class FluencyScreen extends StatefulWidget {
   final Map<String, dynamic> fluencyData;
-  final String? audioPath; // Path to the recorded user audio
+  final String audioPath; // Path to the recorded user audio
+  final int earnedXp;
 
-  const FluencyScreen({super.key, required this.fluencyData, required this.audioPath});
+  const FluencyScreen({
+    super.key, 
+    required this.fluencyData, 
+    required this.audioPath,
+    this.earnedXp = 0,
+  });
 
   @override
   State<FluencyScreen> createState() => _FluencyScreenState();
@@ -301,6 +308,56 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                           Padding(
                             padding: const EdgeInsets.all(20),
                             child: _buildAnnotatedTranscript(),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // 1.5 XP Earned Card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF8A48F0), Color(0xFF6C63FF)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF6C63FF).withOpacity(0.3),
+                            blurRadius: 15,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                "Fluency XP",
+                                style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                "+${widget.earnedXp} Points",
+                                style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.flash_on_rounded, color: Colors.white, size: 28),
                           ),
                         ],
                       ),

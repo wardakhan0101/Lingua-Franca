@@ -15,6 +15,7 @@ import '../services/my_audio_source.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'unified_report_screen.dart';
+import '../services/gamification_service.dart';
 
 class ScenarioChatScreen extends StatefulWidget {
   final Scenario scenario;
@@ -61,6 +62,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   final List<Map<String, dynamic>> _turnFluencyResults = [];
   final List<Future<void>> _activeFluencyTasks = []; // Track pending background tasks
   final List<String> _userTranscripts = [];
+  final GamificationService _gamificationService = GamificationService();
 
   @override
   void initState() {
@@ -611,6 +613,19 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       };
       final grammarResult = await grammarFuture;
 
+      // 3. GAMIFICATION: Calculate and Save XP
+      int calculatedXp = 0;
+      try {
+        final xpResults = await _gamificationService.updateSessionXp(
+          grammarResult: grammarResult,
+          fluencyData: combinedFluencyResult,
+          durationSeconds: 0, // Duration not strictly tracked here, but could be added
+        );
+        calculatedXp = xpResults['earnedXp'] ?? 0;
+      } catch (e) {
+        debugPrint("Gamification Error in scenario chat: $e");
+      }
+
       if (mounted) {
         setState(() => _isLoading = false);
         Navigator.pushReplacement(
@@ -620,6 +635,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
               grammarResult: grammarResult,
               fluencyResult: combinedFluencyResult,
               audioPath: _currentTurnAudioPath, // Pass the last known clip
+              earnedXp: calculatedXp,
             ),
           ),
         );
