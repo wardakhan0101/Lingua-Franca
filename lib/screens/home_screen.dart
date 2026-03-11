@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lingua_franca/screens/developers_screen.dart';
 import 'package:lingua_franca/screens/profile_screen.dart';
 import 'package:lingua_franca/screens/timed_presentation_screen.dart';
@@ -92,6 +94,154 @@ class GradientCircularProgress extends StatelessWidget {
         gradientColors: gradientColors,
       ),
       child: const SizedBox.expand(),
+    );
+  }
+}
+
+class RobotPainter extends CustomPainter {
+  final double swingAngle;
+  final double blinkValue;
+  final Color primaryColor;
+
+  RobotPainter({
+    required this.swingAngle,
+    required this.blinkValue,
+    required this.primaryColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.grey.shade400;
+
+    // Center of the widget is the swing pivot
+    final pivot = Offset(size.width / 2, 0);
+    
+    canvas.save();
+    canvas.translate(pivot.dx, pivot.dy);
+    canvas.rotate(swingAngle);
+
+    // Cable/Arm from pivot to body top
+    canvas.drawLine(Offset.zero, const Offset(0, 40), strokePaint);
+
+    // Robot Body (Main Torso)
+    paint.color = Colors.white;
+    final bodyRect = Rect.fromCenter(center: const Offset(0, 70), width: 40, height: 50);
+    canvas.drawRRect(RRect.fromRectAndRadius(bodyRect, const Radius.circular(8)), paint);
+    canvas.drawRRect(RRect.fromRectAndRadius(bodyRect, const Radius.circular(8)), strokePaint);
+
+    // Accent on body
+    paint.color = primaryColor.withOpacity(0.1);
+    canvas.drawCircle(const Offset(0, 70), 10, paint);
+
+    // Robot Head
+    paint.color = Colors.white;
+    final headRect = Rect.fromCenter(center: const Offset(0, 40), width: 30, height: 25);
+    canvas.drawRRect(RRect.fromRectAndRadius(headRect, const Radius.circular(6)), paint);
+    canvas.drawRRect(RRect.fromRectAndRadius(headRect, const Radius.circular(6)), strokePaint);
+
+    // Eyes
+    paint.color = primaryColor.withOpacity(0.3 + (0.7 * blinkValue));
+    canvas.drawCircle(const Offset(-7, 40), 3, paint);
+    canvas.drawCircle(const Offset(7, 40), 3, paint);
+
+    // Arms (Dynamic)
+    final armAngle = swingAngle * 0.5;
+    // Left Arm
+    canvas.save();
+    canvas.translate(-20, 60);
+    canvas.rotate(0.5 + armAngle);
+    canvas.drawLine(Offset.zero, const Offset(0, 20), strokePaint);
+    canvas.restore();
+
+    // Right Arm
+    canvas.save();
+    canvas.translate(20, 60);
+    canvas.rotate(-0.5 + armAngle);
+    canvas.drawLine(Offset.zero, const Offset(0, 20), strokePaint);
+    canvas.restore();
+
+    // Legs (Dynamic)
+    final legAngle = swingAngle * 1.2;
+    // Left Leg
+    canvas.save();
+    canvas.translate(-10, 95);
+    canvas.rotate(legAngle);
+    canvas.drawLine(Offset.zero, const Offset(0, 15), strokePaint);
+    canvas.restore();
+
+    // Right Leg
+    canvas.save();
+    canvas.translate(10, 95);
+    canvas.rotate(legAngle * 0.8);
+    canvas.drawLine(Offset.zero, const Offset(0, 15), strokePaint);
+    canvas.restore();
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant RobotPainter oldDelegate) {
+    return oldDelegate.swingAngle != swingAngle || 
+           oldDelegate.blinkValue != blinkValue;
+  }
+}
+
+class SwingingRobot extends StatefulWidget {
+  const SwingingRobot({super.key});
+
+  @override
+  State<SwingingRobot> createState() => _SwingingRobotState();
+}
+
+class _SwingingRobotState extends State<SwingingRobot> with TickerProviderStateMixin {
+  late AnimationController _swingController;
+  late AnimationController _blinkController;
+  late Animation<double> _swingAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _swingController = AnimationController(
+      duration: const Duration(seconds: 3),
+      vsync: this,
+    )..repeat(reverse: true);
+    
+    _swingAnimation = Tween<double>(begin: -0.2, end: 0.2).animate(
+      CurvedAnimation(parent: _swingController, curve: Curves.easeInOut),
+    );
+
+    _blinkController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _swingController.dispose();
+    _blinkController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_swingAnimation, _blinkController]),
+      builder: (context, child) {
+        return CustomPaint(
+          size: const Size(100, 120),
+          painter: RobotPainter(
+            swingAngle: _swingAnimation.value,
+            blinkValue: _blinkController.value,
+            primaryColor: const Color(0xFF8A48F0),
+          ),
+        );
+      },
     );
   }
 }
@@ -330,15 +480,35 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWelcomeBanner(Color primary, String level) {
+    // Determine dynamic greeting based on time of day
+    final hour = DateTime.now().hour;
+    String greeting;
+    if (hour < 12) {
+      greeting = 'Good Morning, Learner!';
+    } else if (hour < 17) {
+      greeting = 'Good Afternoon, Learner!';
+    } else {
+      greeting = 'Good Evening, Learner!';
+    }
+
+    // Rotating Tip of the Day
+    final tips = [
+      "Tip: Try the presentation mode to build confidence.",
+      "Tip: Scenario chats help you think on your feet.",
+      "Tip: Consistent practice is key to fluency.",
+      "Tip: Don't worry about mistakes; keep speaking!",
+    ];
+    final currentTip = tips[DateTime.now().day % tips.length];
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       width: double.infinity,
       decoration: BoxDecoration(
         // ✨ NEW: Subtle Gradient Background (The "Fancy" Touch)
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           colors: [
-            const Color(0xFFF9F5FF), // Very light purple
-            const Color(0xFFF0E6FF), // Slightly deeper light purple
+            Color(0xFFF9F5FF), // Very light purple
+            Color(0xFFF0E6FF), // Slightly deeper light purple
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -356,39 +526,58 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  greeting,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF344054),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  currentTip,
+                  style: const TextStyle(color: Color(0xFF667085), fontSize: 13, height: 1.3),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.topCenter,
             children: [
-              Text(
-                'Welcome User!',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF344054),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.6), // Glass-like feel
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white),
+                ),
+                child: Text(
+                  'Level $level',
+                  style: TextStyle(
+                    color: primary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
                 ),
               ),
-              SizedBox(height: 4),
-              Text(
-                "Let's start your journey.",
-                style: TextStyle(color: Color(0xFF667085), fontSize: 14),
+              Positioned(
+                top: 26,
+                child: Transform.scale(
+                  scale: 0.6,
+                  alignment: Alignment.topCenter,
+                  child: const SwingingRobot(),
+                ),
               ),
             ],
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.6), // Glass-like feel
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white),
-            ),
-            child: Text(
-              'Level $level',
-              style: TextStyle(
-                color: primary,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
           ),
         ],
       ),
@@ -405,106 +594,105 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Container(
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Your Speaking Progress',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: textDark,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // NEW: Horizontal Level Progress Bar
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Level $level Progress',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textGrey),
-              ),
-              Text(
-                '$totalXp / $threshold XP',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: primary),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.grey.shade100),
+            boxShadow: [
+              BoxShadow(
+                color: primary.withOpacity(0.08),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              value: currentProgress,
-              minHeight: 10,
-              backgroundColor: const Color(0xFFF2F4F7),
-              color: primary,
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                flex: 3,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Complete practice sessions to increase your score and reach the next level!',
-                      style: TextStyle(fontSize: 14, color: textGrey),
-                    ),
-                  ],
+              Text(
+                'Your Speaking Progress',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: textDark,
                 ),
               ),
-              const SizedBox(width: 20),
-              Expanded(
-                flex: 2,
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // Track color only, no progress
-                      GradientCircularProgress(
-                        progress: currentProgress,
-                        primaryColor: primary,
-                        trackColor: const Color(0xFFF2F4F7),
-                        strokeWidth: 14,
-                      ),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
+              const SizedBox(height: 12),
+              // NEW: Horizontal Level Progress Bar
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Level $level Progress',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textGrey),
+                  ),
+                  Text(
+                    '$totalXp / $threshold XP',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: primary),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(
+                  value: currentProgress,
+                  minHeight: 10,
+                  backgroundColor: const Color(0xFFF2F4F7),
+                  color: primary,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Complete practice sessions to increase your score and reach the next level!',
+                          style: TextStyle(fontSize: 14, color: textGrey),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    flex: 2,
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: Stack(
+                        alignment: Alignment.center,
                         children: [
-                          Text(
-                            currentProgressText,
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              color: textDark,
-                            ),
+                          GradientCircularProgress(
+                            progress: currentProgress,
+                            primaryColor: primary,
+                            trackColor: const Color(0xFFF2F4F7),
+                            strokeWidth: 14,
+                          ),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                currentProgressText,
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w900,
+                                  color: textDark,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
     );
   }
 
@@ -999,14 +1187,7 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
         unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
         onTap: (index) {
-          if (index == 1){
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => const TimedPresentationScreen(),
-              ),
-            );
-          }
-          if (index == 3) {
+          if (index == 1) {
             Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (context) => const ProfileScreen(),
@@ -1016,8 +1197,6 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.mic_rounded), label: 'Practice'),
-          BottomNavigationBarItem(icon: Icon(Icons.pie_chart_rounded), label: 'Progress'),
           BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
         ],
       ),

@@ -122,28 +122,28 @@ class SpokenEnglishGrammarChecker:
         sentence_count = len(list(doc.sents))
         
         # Calculate a more dynamic grammar score using exponential decay
-        # Formula: Score = 100 * e^(-0.5 * (Mistakes / Sentences))
-        # This penalizes high mistake density much more strictly.
+        # Formula: Score = 100 * e^(-0.25 * (Mistakes / Sentences))
+        # Gentler penalty suitable for spoken English learners.
         
         if is_perfect or sentence_count == 0:
             grammar_score = 100
         else:
-            # Weighted mistakes based on severity
+            # Weighted mistakes based on severity (kept close to 1.0 to avoid over-penalizing)
             weighted_mistakes = 0
             for m in mistakes:
                 sev = m.get('severity', 'medium').lower()
-                if sev == 'high': weighted_mistakes += 1.5
-                elif sev == 'medium': weighted_mistakes += 1.0
-                else: weighted_mistakes += 0.5
+                if sev == 'high': weighted_mistakes += 1.0
+                elif sev == 'medium': weighted_mistakes += 0.7
+                else: weighted_mistakes += 0.3
             
             # Error density: mistakes per sentence
             density = weighted_mistakes / sentence_count
             
-            # Exponential decay
-            # 1 mistake/sentence (~1.0 density) -> ~60%
-            # 2 mistakes/sentence (~2.0 density) -> ~36%
-            # 3 mistakes/sentence (~3.0 density) -> ~22%
-            grammar_score = int(100 * math.exp(-0.5 * density))
+            # Exponential decay (coefficient -0.25 gives gentler scoring)
+            # 1 mistake/sentence (~1.0 density) -> ~78%
+            # 2 mistakes/sentence (~2.0 density) -> ~61%
+            # 3 mistakes/sentence (~3.0 density) -> ~47%
+            grammar_score = int(100 * math.exp(-0.25 * density))
             grammar_score = max(0, min(100, grammar_score))
 
         report = {
