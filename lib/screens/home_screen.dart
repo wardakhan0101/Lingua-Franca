@@ -116,19 +116,21 @@ class _HomeScreenState extends State<HomeScreen> {
     // This wakes up the servers before the user actually starts a session.
     GrammarApiService.analyzeText('warmup').catchError((_) {});
     // Fluency API can also be warmed up by sending a small/invalid request
-    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) {});
+    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) => <String, dynamic>{});
   }
 
   Future<void> _loadUserStats() async {
     try {
       final stats = await _gamificationService.getUserStats();
-      setState(() {
-        _userStats = stats;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _userStats = stats;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint("Error loading stats: $e");
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

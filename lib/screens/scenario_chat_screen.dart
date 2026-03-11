@@ -168,6 +168,9 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         isFinished = true;
       }
 
+      // Guard: user may have pressed Back while Ollama was responding
+      if (!mounted) return;
+
       setState(() {
         if (response.isNotEmpty) {
           _messages.add({
@@ -176,7 +179,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
             "isVisible": true,
             "timestamp": DateTime.now(),
           });
-          
           // trigger TTS playback silently
           _playAiResponse(response);
         }
@@ -187,6 +189,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       });
       _scrollToBottom();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _messages.add({
           "role": "system_error",
