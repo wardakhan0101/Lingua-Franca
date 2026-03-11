@@ -266,19 +266,21 @@ class _HomeScreenState extends State<HomeScreen> {
     // This wakes up the servers before the user actually starts a session.
     GrammarApiService.analyzeText('warmup').catchError((_) {});
     // Fluency API can also be warmed up by sending a small/invalid request
-    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) {});
+    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) => <String, dynamic>{});
   }
 
   Future<void> _loadUserStats() async {
     try {
       final stats = await _gamificationService.getUserStats();
-      setState(() {
-        _userStats = stats;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _userStats = stats;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint("Error loading stats: $e");
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -1004,7 +1006,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       id: "fast_food_1",
                       title: "Ordering Fast Food",
                       // UPDATED IN PHASE 5: Adding [END_CONVERSATION] instruction
-                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses short, conversational, and authentic to a fast-food drive-thru or counter experience. Do not offer more than 2-3 sentences per turn. Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
+                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses extremely short and conversational. You MUST respond with only 1 short sentence per turn (maximum 10 words). Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them in one short sentence. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
                       initialGreeting: "Hi there! Welcome to Burger Haven. What can I get for you today?",
                     ),
                   )),

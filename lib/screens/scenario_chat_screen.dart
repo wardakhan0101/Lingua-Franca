@@ -58,6 +58,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   // Background Analysis Variables
   IOSink? _audioFileSink;
   StreamSubscription<List<int>>? _audioStreamSubscription;
+  StreamController<List<int>>? _audioController; // Promoted to class field to prevent leaks
   String? _currentTurnAudioPath;
   final List<Map<String, dynamic>> _turnFluencyResults = [];
   final List<Future<void>> _activeFluencyTasks = []; // Track pending background tasks
@@ -168,6 +169,9 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         isFinished = true;
       }
 
+      // Guard: user may have pressed Back while Ollama was responding
+      if (!mounted) return;
+
       setState(() {
         if (response.isNotEmpty) {
           _messages.add({
@@ -176,7 +180,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
             "isVisible": true,
             "timestamp": DateTime.now(),
           });
-          
           // trigger TTS playback silently
           _playAiResponse(response);
         }
@@ -187,6 +190,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       });
       _scrollToBottom();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _messages.add({
           "role": "system_error",
@@ -264,7 +268,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _isListening = true;
       _fullTranscript = '';
       _currentSegment = '';
-      // Do NOT clear controller here so they don't lose typed text if they accidentally hit mic
     });
 
     try {
@@ -280,15 +283,12 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _audioFileSink = audioFile.openWrite();
       _writeWavHeader(_audioFileSink!, 0);
 
-      // Bug fix: Create Deepgram listener FIRST (using a dummy placeholder stream),
-      // then wait for the WebSocket to open, THEN start the recorder.
-      // Previously, the recorder started before Deepgram was ready, dropping the first syllable.
-
-      // We need a broadcast stream. Use a StreamController to bridge recorder → Deepgram.
-      final audioController = StreamController<List<int>>.broadcast();
+      // BUGFIX: Close and replace any leftover StreamController from the previous turn.
+      await _audioController?.close();
+      _audioController = StreamController<List<int>>.broadcast();
 
       _liveListener = _deepgram.listen.liveListener(
-        audioController.stream,
+        _audioController!.stream,
         queryParams: {
           'model': 'nova-2-general',
           'punctuate': false,
@@ -298,30 +298,49 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         },
       );
 
-      _deepgramSubscription = _liveListener!.stream.listen(
-        (result) {
-          if (result.transcript != null && result.transcript!.isNotEmpty) {
-            setState(() {
-              if (result.isFinal) {
-                _fullTranscript +=
-                    (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
-                _currentSegment = '';
-              } else {
-                _currentSegment = result.transcript!;
+      // BUGFIX: Wrap in runZonedGuarded to catch WebSocketChannelException.
+      // The deepgram package pushes audio to a WebSocket SINK internally.
+      // If the connection drops (e.g. app backgrounded, network cut), the sink
+      // throws a WebSocketChannelException which escapes our onError handler
+      // because it originates from the write-side, not the read-side stream.
+      // runZonedGuarded intercepts ALL async errors in this zone.
+      runZonedGuarded(() {
+        _deepgramSubscription = _liveListener!.stream.listen(
+          (result) {
+            if (result.transcript != null && result.transcript!.isNotEmpty) {
+              if (mounted) {
+                setState(() {
+                  if (result.isFinal) {
+                    _fullTranscript +=
+                        (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
+                    _currentSegment = '';
+                  } else {
+                    _currentSegment = result.transcript!;
+                  }
+                });
               }
-            });
-            _scrollToBottom();
-          }
-        },
-        onError: (error) {
-          debugPrint('Deepgram error: $error');
-          audioController.close();
-          _stopListening();
-        },
-      );
+              _scrollToBottom();
+            }
+          },
+          onError: (error) {
+            debugPrint('Deepgram stream error: $error');
+            _audioController?.close();
+            _audioController = null;
+            _stopListening();
+          },
+          cancelOnError: false, // Don't auto-cancel; let onError handle recovery
+        );
 
-      // Start Deepgram WebSocket handshake FIRST
-      _liveListener!.start();
+        // Start Deepgram WebSocket handshake
+        _liveListener!.start();
+      }, (error, stackTrace) {
+        // Catches WebSocketChannelException and other sink-side async errors
+        // that escape the stream's onError callback.
+        debugPrint('Deepgram zone error (likely WebSocket abort): $error');
+        _audioController?.close();
+        _audioController = null;
+        if (_isListening) _stopListening();
+      });
 
       // Wait for WebSocket to fully open before audio starts flowing
       await Future.delayed(const Duration(milliseconds: 400));
@@ -338,11 +357,12 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       // Pipe recorder audio into both the WAV file and the Deepgram WebSocket
       _audioStreamSubscription = stream.listen((audioData) {
         _audioFileSink?.add(audioData);
-        if (!audioController.isClosed) {
-          audioController.add(audioData);
+        if (_audioController != null && !_audioController!.isClosed) {
+          _audioController!.add(audioData);
         }
       }, onDone: () {
-        audioController.close();
+        _audioController?.close();
+        _audioController = null;
       });
 
     } catch (e) {
@@ -362,7 +382,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       await _recorder.stop();
       await _deepgramSubscription?.cancel();
       _deepgramSubscription = null;
-      _liveListener?.close();
+      try { _liveListener?.close(); } catch (_) {} // WebSocket may already be dead
       _liveListener = null;
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
@@ -664,6 +684,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     _deepgramSubscription?.cancel();
     _liveListener?.close();
     _audioStreamSubscription?.cancel();
+    _audioController?.close(); // Cleanup the class-level StreamController
     _audioFileSink?.close();
     _controller.dispose();
     _scrollController.dispose();
