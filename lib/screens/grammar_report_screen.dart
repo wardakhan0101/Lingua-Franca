@@ -1,54 +1,21 @@
 import 'package:flutter/material.dart';
-import '../services/analysis_storage_service.dart';
 import '../services/grammar_api_service.dart';
 
 class GrammarReportScreen extends StatefulWidget {
   final GrammarAnalysisResult result;
+  final int earnedXp; // NEW
 
-  const GrammarReportScreen({super.key, required this.result});
+  const GrammarReportScreen({super.key, required this.result, required this.earnedXp});
 
   @override
   State<GrammarReportScreen> createState() => _GrammarReportScreenState();
 }
 
 class _GrammarReportScreenState extends State<GrammarReportScreen> {
-  final AnalysisStorageService _storageService = AnalysisStorageService();
 
   @override
   void initState() {
     super.initState();
-    // Store results in Firebase when screen loads
-    _storeAnalysisResults();
-  }
-
-  // Store the analysis results in Firebase
-  Future<void> _storeAnalysisResults() async {
-    try {
-      // Convert GrammarMistake objects to Map
-      List<Map<String, dynamic>> mistakesData = widget.result.mistakes.map((mistake) {
-        return {
-          'mistakeText': mistake.mistakeText,
-          'message': mistake.message,
-          'errorType': mistake.errorType,
-          'severity': mistake.severity,
-          'suggestions': mistake.suggestions,
-        };
-      }).toList();
-
-      await _storageService.storeGrammarAnalysis(
-        originalText: widget.result.originalText,
-        correctedText: widget.result.correctedText,
-        message: widget.result.message,
-        mistakes: mistakesData,
-        mistakeCategories: widget.result.mistakeCategories,
-        totalMistakes: widget.result.summary.totalMistakes,
-        wordCount: widget.result.summary.wordCount,
-        sentenceCount: widget.result.summary.sentenceCount,
-      );
-    } catch (e) {
-      debugPrint("Failed to store grammar analysis in Firebase: $e");
-      // Don't show error to user, just log it
-    }
   }
 
   @override
@@ -187,33 +154,50 @@ class _GrammarReportScreenState extends State<GrammarReportScreen> {
   }
 
   Widget _buildSummaryStats() {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _buildStatCard(
-            'Mistakes',
-            widget.result.summary.totalMistakes.toString(),
-            Icons.error_outline,
-            Colors.red,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                'Grammar XP',
+                '+${widget.earnedXp}',
+                Icons.bolt_rounded,
+                const Color(0xFFFFD700),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Mistakes',
+                widget.result.summary.totalMistakes.toString(),
+                Icons.error_outline,
+                Colors.red,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            'Words',
-            widget.result.summary.wordCount.toString(),
-            Icons.text_fields,
-            Colors.blue,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            'Sentences',
-            widget.result.summary.sentenceCount.toString(),
-            Icons.format_align_left,
-            Colors.purple,
-          ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                'Words',
+                widget.result.summary.wordCount.toString(),
+                Icons.text_fields_rounded,
+                Colors.blue,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Sentences',
+                widget.result.summary.sentenceCount.toString(),
+                Icons.format_align_left_rounded,
+                Colors.purple,
+              ),
+            ),
+          ],
         ),
       ],
     );
