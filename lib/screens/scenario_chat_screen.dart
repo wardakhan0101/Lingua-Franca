@@ -268,7 +268,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _isListening = true;
       _fullTranscript = '';
       _currentSegment = '';
-      // Do NOT clear controller here so they don't lose typed text if they accidentally hit mic
     });
 
     try {
@@ -285,7 +284,6 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _writeWavHeader(_audioFileSink!, 0);
 
       // BUGFIX: Close and replace any leftover StreamController from the previous turn.
-      // Without this, old controllers accumulate and corrupt the audio session after 3-4 turns.
       await _audioController?.close();
       _audioController = StreamController<List<int>>.broadcast();
 
@@ -300,31 +298,49 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         },
       );
 
-      _deepgramSubscription = _liveListener!.stream.listen(
-        (result) {
-          if (result.transcript != null && result.transcript!.isNotEmpty) {
-            setState(() {
-              if (result.isFinal) {
-                _fullTranscript +=
-                    (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
-                _currentSegment = '';
-              } else {
-                _currentSegment = result.transcript!;
+      // BUGFIX: Wrap in runZonedGuarded to catch WebSocketChannelException.
+      // The deepgram package pushes audio to a WebSocket SINK internally.
+      // If the connection drops (e.g. app backgrounded, network cut), the sink
+      // throws a WebSocketChannelException which escapes our onError handler
+      // because it originates from the write-side, not the read-side stream.
+      // runZonedGuarded intercepts ALL async errors in this zone.
+      runZonedGuarded(() {
+        _deepgramSubscription = _liveListener!.stream.listen(
+          (result) {
+            if (result.transcript != null && result.transcript!.isNotEmpty) {
+              if (mounted) {
+                setState(() {
+                  if (result.isFinal) {
+                    _fullTranscript +=
+                        (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
+                    _currentSegment = '';
+                  } else {
+                    _currentSegment = result.transcript!;
+                  }
+                });
               }
-            });
-            _scrollToBottom();
-          }
-        },
-        onError: (error) {
-          debugPrint('Deepgram error: $error');
-          _audioController?.close();
-          _audioController = null;
-          _stopListening();
-        },
-      );
+              _scrollToBottom();
+            }
+          },
+          onError: (error) {
+            debugPrint('Deepgram stream error: $error');
+            _audioController?.close();
+            _audioController = null;
+            _stopListening();
+          },
+          cancelOnError: false, // Don't auto-cancel; let onError handle recovery
+        );
 
-      // Start Deepgram WebSocket handshake FIRST
-      _liveListener!.start();
+        // Start Deepgram WebSocket handshake
+        _liveListener!.start();
+      }, (error, stackTrace) {
+        // Catches WebSocketChannelException and other sink-side async errors
+        // that escape the stream's onError callback.
+        debugPrint('Deepgram zone error (likely WebSocket abort): $error');
+        _audioController?.close();
+        _audioController = null;
+        if (_isListening) _stopListening();
+      });
 
       // Wait for WebSocket to fully open before audio starts flowing
       await Future.delayed(const Duration(milliseconds: 400));
@@ -366,7 +382,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       await _recorder.stop();
       await _deepgramSubscription?.cancel();
       _deepgramSubscription = null;
-      _liveListener?.close();
+      try { _liveListener?.close(); } catch (_) {} // WebSocket may already be dead
       _liveListener = null;
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
