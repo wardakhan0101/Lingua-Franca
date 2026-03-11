@@ -58,6 +58,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   // Background Analysis Variables
   IOSink? _audioFileSink;
   StreamSubscription<List<int>>? _audioStreamSubscription;
+  StreamController<List<int>>? _audioController; // Promoted to class field to prevent leaks
   String? _currentTurnAudioPath;
   final List<Map<String, dynamic>> _turnFluencyResults = [];
   final List<Future<void>> _activeFluencyTasks = []; // Track pending background tasks
@@ -283,15 +284,13 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _audioFileSink = audioFile.openWrite();
       _writeWavHeader(_audioFileSink!, 0);
 
-      // Bug fix: Create Deepgram listener FIRST (using a dummy placeholder stream),
-      // then wait for the WebSocket to open, THEN start the recorder.
-      // Previously, the recorder started before Deepgram was ready, dropping the first syllable.
-
-      // We need a broadcast stream. Use a StreamController to bridge recorder → Deepgram.
-      final audioController = StreamController<List<int>>.broadcast();
+      // BUGFIX: Close and replace any leftover StreamController from the previous turn.
+      // Without this, old controllers accumulate and corrupt the audio session after 3-4 turns.
+      await _audioController?.close();
+      _audioController = StreamController<List<int>>.broadcast();
 
       _liveListener = _deepgram.listen.liveListener(
-        audioController.stream,
+        _audioController!.stream,
         queryParams: {
           'model': 'nova-2-general',
           'punctuate': false,
@@ -318,7 +317,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         },
         onError: (error) {
           debugPrint('Deepgram error: $error');
-          audioController.close();
+          _audioController?.close();
+          _audioController = null;
           _stopListening();
         },
       );
@@ -341,11 +341,12 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       // Pipe recorder audio into both the WAV file and the Deepgram WebSocket
       _audioStreamSubscription = stream.listen((audioData) {
         _audioFileSink?.add(audioData);
-        if (!audioController.isClosed) {
-          audioController.add(audioData);
+        if (_audioController != null && !_audioController!.isClosed) {
+          _audioController!.add(audioData);
         }
       }, onDone: () {
-        audioController.close();
+        _audioController?.close();
+        _audioController = null;
       });
 
     } catch (e) {
@@ -667,6 +668,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     _deepgramSubscription?.cancel();
     _liveListener?.close();
     _audioStreamSubscription?.cancel();
+    _audioController?.close(); // Cleanup the class-level StreamController
     _audioFileSink?.close();
     _controller.dispose();
     _scrollController.dispose();
