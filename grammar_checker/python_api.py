@@ -6,6 +6,7 @@ import language_tool_python
 import json
 from typing import Dict, List
 import uvicorn
+import math
 
 class SpokenEnglishGrammarChecker:
     def __init__(self):
@@ -120,10 +121,31 @@ class SpokenEnglishGrammarChecker:
         word_count = len([token for token in doc if not token.is_punct and not token.is_space])
         sentence_count = len(list(doc.sents))
         
-        # ========================================
-        # STEP 6: CREATE REPORT
-        # ========================================
+        # Calculate a more dynamic grammar score using exponential decay
+        # Formula: Score = 100 * e^(-0.5 * (Mistakes / Sentences))
+        # This penalizes high mistake density much more strictly.
         
+        if is_perfect or sentence_count == 0:
+            grammar_score = 100
+        else:
+            # Weighted mistakes based on severity
+            weighted_mistakes = 0
+            for m in mistakes:
+                sev = m.get('severity', 'medium').lower()
+                if sev == 'high': weighted_mistakes += 1.5
+                elif sev == 'medium': weighted_mistakes += 1.0
+                else: weighted_mistakes += 0.5
+            
+            # Error density: mistakes per sentence
+            density = weighted_mistakes / sentence_count
+            
+            # Exponential decay
+            # 1 mistake/sentence (~1.0 density) -> ~60%
+            # 2 mistakes/sentence (~2.0 density) -> ~36%
+            # 3 mistakes/sentence (~3.0 density) -> ~22%
+            grammar_score = int(100 * math.exp(-0.5 * density))
+            grammar_score = max(0, min(100, grammar_score))
+
         report = {
             'original_text': text,
             'corrected_text': final_corrected_text,
@@ -135,16 +157,16 @@ class SpokenEnglishGrammarChecker:
                 'is_perfect': is_perfect,
                 'has_errors': has_errors,
                 'model_made_additional_corrections': model_made_changes,
-                'grammar_score': 100 if is_perfect else 99
+                'grammar_score': grammar_score
             },
             'mistake_categories': self._categorize_mistakes(mistakes)
         }
         
         # Add appropriate message based on analysis
         if is_perfect:
-            report['message'] = "No grammar mistake, score is 100"
+            report['message'] = "Perfect! Your grammar is 100% correct."
         else:
-            report['message'] = "Grammar mistake detected, score is less than 100"
+            report['message'] = f"Your grammar is {grammar_score}% correct."
         
         return report
     

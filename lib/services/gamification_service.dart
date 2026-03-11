@@ -43,22 +43,17 @@ class GamificationService {
     final userId = _auth.currentUser?.uid;
     if (userId == null) return {'earnedXp': 0};
 
-    // 1. Calculate Grammar XP (Base 100)
-    int grammarXp = 100;
-    for (var mistake in grammarResult.mistakes) {
-      if (mistake.severity.toLowerCase() == 'high') {
-        grammarXp -= 10;
-      } else if (mistake.severity.toLowerCase() == 'medium') {
-        grammarXp -= 5;
-      } else {
-        grammarXp -= 2;
-      }
-    }
-    if (grammarResult.mistakes.isEmpty) grammarXp += 20; // Perfect Bonus
+    // 1. Calculate Grammar XP (Aligned with rigorous score %)
+    // We use the grammarScore (0-100) returned by the API as the basis.
+    int grammarXp = grammarResult.summary.grammarScore.toInt();
+    
+    // Add a small bonus for a perfect session
+    if (grammarResult.mistakes.isEmpty) grammarXp += 20; 
+    
     grammarXp = grammarXp.clamp(0, 120);
 
-    // 2. Calculate Fluency XP (Base 100)
-    int fluencyXp = 100;
+    // 2. Calculate Fluency XP (Base 50)
+    int fluencyXp = 50;
     final annotatedTranscript = fluencyData['annotated_transcript'] as String? ?? '';
     
     // Counting markers
@@ -67,10 +62,10 @@ class GamificationService {
     fluencyXp -= _countOccurrences(annotatedTranscript, '[FAST]') * 3;
     fluencyXp -= _countOccurrences(annotatedTranscript, '[F]') * 2;
     fluencyXp -= _countOccurrences(annotatedTranscript, '[P-minor]') * 1;
-    fluencyXp = fluencyXp.clamp(0, 100);
+    fluencyXp = fluencyXp.clamp(0, 50);
 
     // 3. Base & Duration XP
-    int basePracticeXp = 50;
+    int basePracticeXp = 10;
     int engagementXp = durationSeconds ~/ 10;
 
     int totalEarnedXp = grammarXp + fluencyXp + basePracticeXp + engagementXp;
@@ -83,11 +78,11 @@ class GamificationService {
     double streakMultiplier = 1.0 + (streakResult.clamp(0, 5) * 0.05);
     totalEarnedXp = (totalEarnedXp * streakMultiplier).toInt();
 
-    // 5. Save to Firestore
-    await _firestore.collection('users').doc(userId).update({
+    // 5. Save to Firestore (Robust set with merge)
+    await _firestore.collection('users').doc(userId).set({
       'totalXp': FieldValue.increment(totalEarnedXp),
       'totalSessions': FieldValue.increment(1),
-    });
+    }, SetOptions(merge: true));
 
     // Check for badges
     await _checkAndAwardBadges(userId, data, totalEarnedXp, durationSeconds, grammarResult.mistakes.isEmpty);
@@ -134,14 +129,51 @@ class GamificationService {
     List<String> currentBadges = List<String>.from(data['badges'] ?? []);
     List<String> newBadges = [];
 
+    // 1. Iron Lung (3+ min session)
     if (duration > 180 && !currentBadges.contains('Iron Lung')) {
       newBadges.add('Iron Lung');
     }
+    // 2. Grammar Wizard (Perfect session)
     if (isPerfect && !currentBadges.contains('Grammar Wizard')) {
       newBadges.add('Grammar Wizard');
     }
     
-    // Add more logic as needed...
+    // --- NEW BADGES ---
+    
+    final now = DateTime.now();
+    
+    // 3. Night Owl (Practice after 11 PM or before 5 AM)
+    if ((now.hour >= 23 || now.hour < 5) && !currentBadges.contains('Night Owl')) {
+      newBadges.add('Night Owl');
+    }
+    
+    // 4. Early Bird (Practice between 5 AM and 9 AM)
+    if ((now.hour >= 5 && now.hour < 9) && !currentBadges.contains('Early Bird')) {
+      newBadges.add('Early Bird');
+    }
+    
+    // 5. Streak Starter (3 day streak)
+    int currentStreak = data['currentStreak'] as int? ?? 0;
+    if (currentStreak >= 3 && !currentBadges.contains('Streak Starter')) {
+      newBadges.add('Streak Starter');
+    }
+    
+    // 6. Weekly Warrior (7 day streak)
+    if (currentStreak >= 7 && !currentBadges.contains('Weekly Warrior')) {
+      newBadges.add('Weekly Warrior');
+    }
+    
+    // 7. Persistent Learner (10 total sessions)
+    int totalSessions = (data['totalSessions'] as int? ?? 0) + 1; // +1 because we are in the update flow
+    if (totalSessions >= 10 && !currentBadges.contains('Persistent Learner')) {
+      newBadges.add('Persistent Learner');
+    }
+    
+    // 8. B2 Master (Reached B2 level)
+    String level = data['currentLevel'] as String? ?? 'B1';
+    if (level == 'B2' && !currentBadges.contains('B2 Master')) {
+      newBadges.add('B2 Master');
+    }
 
     if (newBadges.isNotEmpty) {
       await _firestore.collection('users').doc(userId).update({

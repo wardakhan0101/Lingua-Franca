@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../services/analysis_storage_service.dart';
@@ -320,15 +321,18 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                       width: double.infinity,
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF8A48F0), Color(0xFF6C63FF)],
+                        gradient: LinearGradient(
+                          colors: [
+                            _getScoreColor(_calculateFluencyScore()).withOpacity(0.8),
+                            _getScoreColor(_calculateFluencyScore()),
+                          ],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF6C63FF).withOpacity(0.3),
+                            color: _getScoreColor(_calculateFluencyScore()).withOpacity(0.3),
                             blurRadius: 15,
                             offset: const Offset(0, 8),
                           ),
@@ -365,17 +369,30 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
 
                     const SizedBox(height: 32),
 
-                    // 2. Header for Issues
+                    // 2. Header for Issues & Score
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          "Areas for Improvement",
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87
-                          ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Fluency Score",
+                              style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87
+                              ),
+                            ),
+                            Text(
+                              "${_calculateFluencyScore()}% Smoothness",
+                              style: TextStyle(
+                                color: _getScoreColor(_calculateFluencyScore()),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -385,7 +402,7 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                             border: Border.all(color: const Color(0xFF6C63FF).withValues(alpha: 0.2)),
                           ),
                           child: Text(
-                            "${_fluencyIssues.length} Found",
+                            "${_fluencyIssues.length} Issues",
                             style: const TextStyle(
                               color: Color(0xFF6C63FF),
                               fontWeight: FontWeight.bold,
@@ -411,7 +428,7 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                             Icon(Icons.verified_rounded, size: 64, color: Color(0xFF34D399)),
                             SizedBox(height: 16),
                             Text(
-                              "Excellent Fluency!",
+                              "Excellent Fluency! 100%",
                               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
                             ),
                             SizedBox(height: 8),
@@ -441,6 +458,46 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                 ),
       ),
     );
+  }
+
+  int _calculateFluencyScore() {
+    final text = _annotatedTranscript;
+    if (text.isEmpty) return 100;
+
+    // Counting markers (Weighted)
+    double penalty = 0;
+    penalty += _countOccurrences(text, '[P-major]') * 2.0;
+    penalty += _countOccurrences(text, '[S]') * 1.5;
+    penalty += _countOccurrences(text, '[FAST]') * 1.0;
+    penalty += _countOccurrences(text, '[F]') * 0.8;
+    penalty += _countOccurrences(text, '[P-minor]') * 0.5;
+
+    // Get sentence or block count for context
+    // Approximating sentences by splitting by common punctuation or newlines
+    List<String> sentences = _transcript.split(RegExp(r'[.!?\n]')).where((s) => s.trim().length > 3).toList();
+    int count = sentences.isNotEmpty ? sentences.length : 1;
+
+    // Error density: penalty per sentence/block
+    double density = penalty / count;
+    
+    // Formula: Score = 100 * e^(-0.45 * density)
+    // 1 significant penalty per sentence (~1.0 density) -> ~63%
+    // 2 significant penalties per sentence (~2.0 density) -> ~40%
+    // 3 significant penalties per sentence (~3.0 density) -> ~25%
+    int finalScore = (100 * math.exp(-0.45 * density)).toInt();
+    
+    return finalScore.clamp(0, 100);
+  }
+
+  int _countOccurrences(String text, String marker) {
+    if (text.isEmpty || marker.isEmpty) return 0;
+    return (text.length - text.replaceAll(marker, '').length) ~/ marker.length;
+  }
+
+  Color _getScoreColor(int score) {
+    if (score >= 85) return Colors.green;
+    if (score >= 50) return Colors.orange;
+    return Colors.red;
   }
 
   Widget _buildFluencyCard({

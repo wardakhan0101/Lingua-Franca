@@ -87,9 +87,18 @@ class _GrammarReportScreenState extends State<GrammarReportScreen> {
   }
 
   Widget _buildMessageCard() {
-    // Use message instead of score
+    final score = widget.result.summary.grammarScore;
+    
+    MaterialColor color;
     final isPerfect = widget.result.mistakes.isEmpty;
-    final color = isPerfect ? Colors.green : Colors.orange;
+    
+    if (score >= 85) {
+      color = Colors.green;
+    } else if (score >= 50) {
+      color = Colors.orange;
+    } else {
+      color = Colors.red;
+    }
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -154,25 +163,26 @@ class _GrammarReportScreenState extends State<GrammarReportScreen> {
   }
 
   Widget _buildSummaryStats() {
+    final score = widget.result.summary.grammarScore.toInt();
     return Column(
       children: [
         Row(
           children: [
             Expanded(
               child: _buildStatCard(
-                'Grammar XP',
-                '+${widget.earnedXp}',
-                Icons.bolt_rounded,
-                const Color(0xFFFFD700),
+                'Grammar Score',
+                '$score%',
+                Icons.stars_rounded,
+                _getScoreColor(score),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: _buildStatCard(
-                'Mistakes',
-                widget.result.summary.totalMistakes.toString(),
-                Icons.error_outline,
-                Colors.red,
+                'Grammar XP',
+                '+${widget.earnedXp}',
+                Icons.bolt_rounded,
+                const Color(0xFFFFD700),
               ),
             ),
           ],
@@ -182,25 +192,31 @@ class _GrammarReportScreenState extends State<GrammarReportScreen> {
           children: [
             Expanded(
               child: _buildStatCard(
+                'Mistakes',
+                widget.result.summary.totalMistakes.toString(),
+                Icons.error_outline,
+                Colors.red,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
                 'Words',
                 widget.result.summary.wordCount.toString(),
                 Icons.text_fields_rounded,
                 Colors.blue,
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                'Sentences',
-                widget.result.summary.sentenceCount.toString(),
-                Icons.format_align_left_rounded,
-                Colors.purple,
-              ),
-            ),
           ],
         ),
       ],
     );
+  }
+
+  Color _getScoreColor(int score) {
+    if (score >= 85) return Colors.green;
+    if (score >= 50) return Colors.orange;
+    return Colors.red;
   }
 
   Widget _buildStatCard(String label, String value, IconData icon, Color color) {

@@ -63,6 +63,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   final List<Future<void>> _activeFluencyTasks = []; // Track pending background tasks
   final List<String> _userTranscripts = [];
   final GamificationService _gamificationService = GamificationService();
+  DateTime? _startTime;
 
   @override
   void initState() {
@@ -88,6 +89,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     _initAudioSession().then((_) async {
       // Pre-warm the Grammar API Cloud Run instance in the background.
       GrammarApiService.analyzeText('warmup').catchError((_) {});
+
+      _startTime = DateTime.now(); // Start tracking session duration
 
       // BUGFIX: On Android, the audio hardware needs extra time to settle after
       // session configuration on first launch (Flutter startup is very heavy).
@@ -615,11 +618,15 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
       // 3. GAMIFICATION: Calculate and Save XP
       int calculatedXp = 0;
+      final durationSeconds = _startTime != null 
+          ? DateTime.now().difference(_startTime!).inSeconds 
+          : 0;
+
       try {
         final xpResults = await _gamificationService.updateSessionXp(
           grammarResult: grammarResult,
           fluencyData: combinedFluencyResult,
-          durationSeconds: 0, // Duration not strictly tracked here, but could be added
+          durationSeconds: durationSeconds,
         );
         calculatedXp = xpResults['earnedXp'] ?? 0;
       } catch (e) {

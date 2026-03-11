@@ -8,6 +8,7 @@ import '../services/grammar_api_service.dart';
 import '../services/fluency_api_service.dart';
 import 'scenario_chat_screen.dart';
 import 'accent_test_screen.dart';
+import 'badges_screen.dart';
 
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
@@ -200,26 +201,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (context) => const AccentTestScreen()),
-                      ),
-                      icon: const Icon(Icons.record_voice_over),
-                      label: const Text('Test TTS Engine'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: primaryPurple,
-                        side: BorderSide(color: primaryPurple),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                    ),
-                  ),
-
                   const SizedBox(height: 32),
 
                   // UNIMPLEMENTED SECTION 1: Streak (Dynamic)
@@ -229,13 +210,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   const SizedBox(height: 32),
 
-                  // UNIMPLEMENTED SECTION 2: Achievements (Dynamic)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       _buildSectionTitle('Your Achievements', textDark),
-                      // "View All" is grey to suggest disabled
-                      Text("View All", style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.bold, fontSize: 12)),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => BadgesScreen(unlockedBadges: badges),
+                            ),
+                          );
+                        },
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(50, 30),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text(
+                          "View All",
+                          style: TextStyle(
+                            color: Color(0xFF8A48F0),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -462,12 +462,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // All stats at 0
-                    _buildStatRow('Speaking', '0/100', 0.0, textDark),
-                    const SizedBox(height: 16),
-                    _buildStatRow('Fluency', '0%', 0.0, textDark),
-                    const SizedBox(height: 16),
-                    _buildStatRow('Grammar', '0%', 0.0, textDark),
+                    Text(
+                      'Complete practice sessions to increase your score and reach the next level!',
+                      style: TextStyle(fontSize: 14, color: textGrey),
+                    ),
                   ],
                 ),
               ),
