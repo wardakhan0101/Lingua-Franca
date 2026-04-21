@@ -24,14 +24,32 @@ class GamificationService {
         'totalXp': 0,
         'currentLevel': 'B1',
         'currentStreak': 0,
+        'longestStreak': 0,
         'lastActiveDate': null,
         'totalSessions': 0,
         'badges': [],
+        'joinedAt': FieldValue.serverTimestamp(),
       };
       await _firestore.collection('users').doc(userId).set(initialData);
-      return initialData;
+      // Re-read so the serverTimestamp resolves to a concrete value.
+      final freshDoc = await _firestore.collection('users').doc(userId).get();
+      return freshDoc.data() ?? initialData;
     }
-    return doc.data()!;
+
+    final data = doc.data()!;
+    // Backfill fields for users that existed before these were tracked.
+    final Map<String, dynamic> backfill = {};
+    if (!data.containsKey('longestStreak')) {
+      backfill['longestStreak'] = data['currentStreak'] ?? 0;
+    }
+    if (!data.containsKey('joinedAt')) {
+      backfill['joinedAt'] = FieldValue.serverTimestamp();
+    }
+    if (backfill.isNotEmpty) {
+      await _firestore.collection('users').doc(userId).set(backfill, SetOptions(merge: true));
+      data.addAll(backfill);
+    }
+    return data;
   }
 
   // Update XP after a session
@@ -117,10 +135,15 @@ class GamificationService {
       // If difference is 0, do nothing (already active today)
     }
 
-    await _firestore.collection('users').doc(userId).update({
+    final int longestStreak = data['longestStreak'] as int? ?? 0;
+    final Map<String, dynamic> updates = {
       'currentStreak': currentStreak,
       'lastActiveDate': FieldValue.serverTimestamp(),
-    });
+    };
+    if (currentStreak > longestStreak) {
+      updates['longestStreak'] = currentStreak;
+    }
+    await _firestore.collection('users').doc(userId).update(updates);
 
     return currentStreak;
   }

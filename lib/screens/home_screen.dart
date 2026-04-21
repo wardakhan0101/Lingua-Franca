@@ -1229,13 +1229,15 @@ class _HomeScreenState extends State<HomeScreen> {
         showUnselectedLabels: true,
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
         unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-        onTap: (index) {
+        onTap: (index) async {
           if (index == 1) {
-            Navigator.of(context).push(
+            await Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (context) => const ProfileScreen(),
+                builder: (context) => ProfileScreen(initialData: _userStats),
               ),
             );
+            // Refresh home stats after returning — username/photo may have changed.
+            _loadUserStats();
           }
         },
         items: const [
