@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -39,10 +42,15 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
   final FocusNode _textFocusNode = FocusNode();
 
   final Color primaryPurple = const Color(0xFF8A48F0);
+  final Color primaryPurpleDeep = const Color(0xFF6332D1);
   final Color secondaryPurple = const Color(0xFFD9BFFF);
   final Color softBackground = const Color(0xFFF7F7FA);
   final Color textDark = const Color(0xFF101828);
   final Color textGrey = const Color(0xFF667085);
+
+  // User avatar data (base64 photo stored in Firestore under users/{uid}).
+  Uint8List? _userAvatarBytes;
+  String? _userPhotoUrl;
 
   // STT variables
   final AudioRecorder _recorder = AudioRecorder();
@@ -118,6 +126,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
     final sttKey = dotenv.env['STT'] ?? '';
     _deepgram = Deepgram(sttKey);
 
+    _loadUserAvatar();
+
     _initAudioSession().then((_) async {
       // Pre-warm the Grammar API Cloud Run instance in the background.
       GrammarApiService.analyzeText('warmup').catchError((_) {});
@@ -134,6 +144,31 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
         _playAiResponse(widget.scenario.initialGreeting);
       }
     });
+  }
+
+  Future<void> _loadUserAvatar() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final base64Str = doc.data()?['photoBase64'] as String?;
+      if (!mounted) return;
+      setState(() {
+        if (base64Str != null && base64Str.isNotEmpty) {
+          try {
+            _userAvatarBytes = base64Decode(base64Str);
+          } catch (_) {
+            _userAvatarBytes = null;
+          }
+        }
+        _userPhotoUrl = user.photoURL;
+      });
+    } catch (e) {
+      debugPrint('Error loading user avatar: $e');
+    }
   }
 
   Future<void> _initAudioSession() async {
@@ -924,21 +959,22 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
           ),
           if (!_isFinished)
             Padding(
-              padding: const EdgeInsets.only(right: 4.0),
-              child: TextButton(
+              padding: const EdgeInsets.only(right: 8.0, top: 10.0, bottom: 10.0),
+              child: OutlinedButton(
                 onPressed: _endConversation,
-                style: TextButton.styleFrom(
-                  backgroundColor: Colors.red.withOpacity(0.1),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: textGrey,
+                  side: BorderSide(color: Colors.grey.shade300, width: 1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: const Text(
                   "End",
-                  style: TextStyle(
-                    color: Colors.redAccent,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                 ),
               ),
             ),
@@ -947,103 +983,117 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
       body: SafeArea(
         child: Stack(
           children: [
-            Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: EdgeInsets.only(
-                      left: 16,
-                      right: 16,
-                      top: 20,
-                      bottom: 20,
-                    ),
-                    itemCount:
-                        visibleMessages.length +
-                        (_isListening &&
-                                (_fullTranscript.isNotEmpty ||
-                                    _currentSegment.isNotEmpty)
-                            ? 1
-                            : 0),
-                    itemBuilder: (context, index) {
-                      if (index < visibleMessages.length) {
-                        final msg = visibleMessages[index];
-                        final isUser = msg["role"] == "user";
-                        final isError = msg["role"] == "system_error";
+            // Full-bleed message list. Bottom padding clears the floating mic
+            // (mic column ≈ 180px tall) so the latest bubble never hides behind it.
+            ListView.builder(
+              controller: _scrollController,
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 20,
+                bottom: _showTextInput ? 260 : 200,
+              ),
+              itemCount: visibleMessages.length +
+                  (_isListening &&
+                          (_fullTranscript.isNotEmpty ||
+                              _currentSegment.isNotEmpty)
+                      ? 1
+                      : 0),
+              itemBuilder: (context, index) {
+                if (index < visibleMessages.length) {
+                  final msg = visibleMessages[index];
+                  final isUser = msg["role"] == "user";
+                  final isError = msg["role"] == "system_error";
 
-                        return _buildMessageBubble(
-                          text: msg["content"],
-                          isUser: isUser,
-                          timestamp: msg["timestamp"] as DateTime,
-                          isError: isError,
-                        );
-                      } else {
-                        // Build the live transcript bubble
-                        final combinedTranscript =
-                            _fullTranscript +
-                            (_currentSegment.isEmpty
-                                ? ''
-                                : (_fullTranscript.isEmpty ? '' : ' ') +
-                                    _currentSegment);
-                        return _buildMessageBubble(
-                          text: combinedTranscript,
-                          isUser: true,
-                          timestamp: DateTime.now(),
-                          isError: false,
-                          isLive: true,
-                        );
-                      }
-                    },
-                  ),
-                ),
-                if (_isLoading)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 20, bottom: 10),
-                      child: Row(
-                        children: [
-                          if (_isFinished) ...[
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(primaryPurple),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Generating report...',
-                              style: TextStyle(
-                                color: primaryPurple,
-                                fontSize: 12,
-                                fontStyle: FontStyle.italic,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ] else ...[
-                            _TypingDots(color: primaryPurple),
-                            const SizedBox(width: 10),
-                            Text(
-                              'AI Assistant is typing',
-                              style: TextStyle(
-                                color: primaryPurple,
-                                fontSize: 12,
-                                fontStyle: FontStyle.italic,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                _buildInputArea(),
-              ],
+                  return _buildMessageBubble(
+                    text: msg["content"],
+                    isUser: isUser,
+                    timestamp: msg["timestamp"] as DateTime,
+                    isError: isError,
+                  );
+                } else {
+                  // Build the live transcript bubble
+                  final combinedTranscript = _fullTranscript +
+                      (_currentSegment.isEmpty
+                          ? ''
+                          : (_fullTranscript.isEmpty ? '' : ' ') +
+                              _currentSegment);
+                  return _buildMessageBubble(
+                    text: combinedTranscript,
+                    isUser: true,
+                    timestamp: DateTime.now(),
+                    isError: false,
+                    isLive: true,
+                  );
+                }
+              },
+            ),
+            // Floating bottom input area (mic + keyboard pill, no opaque card).
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildInputArea(),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // Small pill shown above the mic when the AI is typing or the report is
+  // being generated. Floats over the chat background instead of sitting in a
+  // solid input card.
+  Widget _buildTypingIndicator() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_isFinished) ...[
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(primaryPurple),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Generating report...',
+              style: TextStyle(
+                color: primaryPurple,
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ] else ...[
+            _TypingDots(color: primaryPurple),
+            const SizedBox(width: 10),
+            Text(
+              'AI Assistant is typing',
+              style: TextStyle(
+                color: primaryPurple,
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1055,108 +1105,151 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
     bool isError = false,
     bool isLive = false,
   }) {
-    final bubble = Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Opacity(
-        opacity: isLive ? 0.88 : 1.0,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          margin: const EdgeInsets.only(bottom: 12),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.75,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color:
-                isError
-                    ? Colors.red.shade100
-                    : (isUser ? primaryPurple : Colors.white),
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(20),
-              topRight: const Radius.circular(20),
-              bottomLeft: Radius.circular(isUser || isError ? 20 : 4),
-              bottomRight: Radius.circular(isUser ? 4 : 20),
+    final bubble = AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      // Extra 3px at the bottom so the timestamp doesn't feel pinched against
+      // the bubble's bottom corners.
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 15),
+      decoration: BoxDecoration(
+        color: isError
+            ? Colors.red.shade100
+            : (isUser ? null : Colors.white),
+        gradient: (isUser && !isError)
+            ? LinearGradient(
+                colors: [primaryPurple, primaryPurpleDeep],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(20),
+          topRight: const Radius.circular(20),
+          bottomLeft: Radius.circular(isUser || isError ? 20 : 4),
+          bottomRight: Radius.circular(isUser ? 4 : 20),
+        ),
+        border: isLive
+            ? Border.all(color: Colors.white.withOpacity(0.6), width: 1.2)
+            : null,
+        boxShadow: [
+          if (isUser && !isError)
+            BoxShadow(
+              color: primaryPurple.withOpacity(0.22),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            )
+          else
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
             ),
-            border: isLive
-                ? Border.all(color: Colors.white.withOpacity(0.6), width: 1.2)
-                : null,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            style: TextStyle(
+              color: isError
+                  ? Colors.red.shade900
+                  : (isUser ? Colors.white : textDark),
+              fontSize: 15,
+              height: 1.4,
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                text,
-                style: TextStyle(
-                  color:
-                      isError
-                          ? Colors.red.shade900
-                          : (isUser ? Colors.white : textDark),
-                  fontSize: 15,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 4),
-              if (isLive)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AnimatedBuilder(
-                      animation: _micPulseController,
-                      builder: (_, __) {
-                        final pulse = 0.5 +
-                            0.5 *
-                                math.sin(_micPulseController.value * 2 * math.pi);
-                        return Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.5 + pulse * 0.5),
-                            shape: BoxShape.circle,
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      "Listening...",
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.75),
-                        fontSize: 10,
-                        fontStyle: FontStyle.italic,
+          const SizedBox(height: 4),
+          if (isLive)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedBuilder(
+                  animation: _micPulseController,
+                  builder: (_, __) {
+                    final pulse = 0.5 +
+                        0.5 *
+                            math.sin(_micPulseController.value * 2 * math.pi);
+                    return Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.5 + pulse * 0.5),
+                        shape: BoxShape.circle,
                       ),
-                    ),
-                  ],
-                )
-              else
+                    );
+                  },
+                ),
+                const SizedBox(width: 6),
                 Text(
-                  "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}",
+                  "Listening...",
                   style: TextStyle(
-                    color: isUser ? Colors.white.withOpacity(0.7) : Colors.grey,
+                    color: Colors.white.withOpacity(0.75),
                     fontSize: 10,
+                    fontStyle: FontStyle.italic,
                   ),
                 ),
-            ],
+              ],
+            )
+          else
+            Text(
+              "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}",
+              style: TextStyle(
+                color: isUser ? Colors.white.withOpacity(0.7) : Colors.grey,
+                fontSize: 10,
+              ),
+            ),
+        ],
+      ),
+    );
+
+    // Avatar: sound-wave mark for the bot, profile picture for the user.
+    // Errors render bare (no avatar) to stay visually neutral.
+    final Widget avatar = isError
+        ? const SizedBox.shrink()
+        : (isUser ? _buildUserAvatar() : _buildBotAvatar());
+
+    final row = Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.85,
+          ),
+          child: Opacity(
+            opacity: isLive ? 0.88 : 1.0,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: isUser
+                  ? (isError
+                      ? [Flexible(child: bubble)]
+                      : [
+                          Flexible(child: bubble),
+                          const SizedBox(width: 8),
+                          avatar,
+                        ])
+                  : [
+                      avatar,
+                      const SizedBox(width: 8),
+                      Flexible(child: bubble),
+                    ],
+            ),
           ),
         ),
       ),
     );
 
     // Live bubble updates constantly; entrance animation would be distracting.
-    if (isLive) return bubble;
+    if (isLive) return row;
 
     // One-shot entrance: fade + slide 10px from the sender's side. Keyed by
     // timestamp so ListView recycling doesn't re-trigger the animation.
     final key = timestamp.millisecondsSinceEpoch;
     final shouldAnimate = !_animatedBubbleKeys.contains(key);
     if (shouldAnimate) _animatedBubbleKeys.add(key);
-    if (!shouldAnimate) return bubble;
+    if (!shouldAnimate) return row;
 
     return TweenAnimationBuilder<double>(
       key: ValueKey(key),
@@ -1172,7 +1265,68 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
           ),
         );
       },
-      child: bubble,
+      child: row,
+    );
+  }
+
+  // Bot identity mark: three purple vertical bars of varying heights inside a
+  // white circular avatar. Replaces any generic bot icon with a brand-aligned
+  // sound-wave glyph.
+  Widget _buildBotAvatar() {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: primaryPurple.withOpacity(0.25), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: primaryPurple.withOpacity(0.10),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: CustomPaint(
+          size: const Size(16, 16),
+          painter: _SoundWavePainter(color: primaryPurple),
+        ),
+      ),
+    );
+  }
+
+  // User avatar: profile picture from Firestore (photoBase64) or Firebase Auth
+  // photoURL, with a fallback person icon if neither is set.
+  Widget _buildUserAvatar() {
+    ImageProvider? img;
+    if (_userAvatarBytes != null) {
+      img = MemoryImage(_userAvatarBytes!);
+    } else if (_userPhotoUrl != null && _userPhotoUrl!.isNotEmpty) {
+      img = NetworkImage(_userPhotoUrl!);
+    }
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: CircleAvatar(
+        radius: 16,
+        backgroundColor: primaryPurple.withOpacity(0.15),
+        backgroundImage: img,
+        child: img == null
+            ? Icon(Icons.person, color: primaryPurple, size: 18)
+            : null,
+      ),
     );
   }
 
@@ -1204,169 +1358,68 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
     }
 
     final bool isMicBlocked = _isTtsPlaying || _isLoading;
+    final bool showKeyboardPill = !isMicBlocked && !_isListening;
 
+    // Transparent floating container — no opaque card. A soft top-edge fade
+    // keeps the mic legible when a long message scrolls up behind it.
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 16,
-            offset: const Offset(0, -4),
-          ),
-        ],
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            softBackground.withOpacity(0.0),
+            softBackground.withOpacity(0.85),
+            softBackground,
+          ],
+          stops: const [0.0, 0.35, 1.0],
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ---- MIC BUTTON (Hero) ----
-          Tooltip(
-            message: isMicBlocked
-                ? (_isTtsPlaying ? 'Wait for AI to finish speaking' : 'Generating response...')
-                : (_isListening ? 'Tap to send' : 'Tap to speak'),
-            child: GestureDetector(
-              onTap: isMicBlocked ? null : _toggleRecording,
-              child: SizedBox(
-                width: 140,
-                height: 140,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Amplitude-reactive ring — only while listening. Rebuilds
-                    // cheaply inside a RepaintBoundary so the rest of the tree
-                    // isn't repainted on every amplitude tick.
-                    if (_isListening)
-                      RepaintBoundary(
-                        child: AnimatedBuilder(
-                          animation: _micPulseController,
-                          builder: (_, __) {
-                            return CustomPaint(
-                              size: const Size(140, 140),
-                              painter: _MicAmplitudePainter(
-                                amplitude: _currentAmplitude,
-                                pulse: _micPulseController.value,
-                                color: Colors.red,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    // TTS ripple — expanding concentric rings while AI speaks.
-                    if (_isTtsPlaying)
-                      RepaintBoundary(
-                        child: AnimatedBuilder(
-                          animation: _ttsRippleController,
-                          builder: (_, __) {
-                            return CustomPaint(
-                              size: const Size(140, 140),
-                              painter: _TtsRipplePainter(
-                                progress: _ttsRippleController.value,
-                                color: primaryPurple,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: isMicBlocked
-                            ? Colors.grey.shade200
-                            : (_isListening
-                                ? Colors.red.withOpacity(0.15)
-                                : primaryPurple.withOpacity(0.1)),
-                      ),
-                      child: Center(
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isMicBlocked
-                                ? Colors.grey.shade300
-                                : (_isListening ? Colors.red : primaryPurple),
-                            boxShadow: isMicBlocked
-                                ? []
-                                : [
-                                    BoxShadow(
-                                      color: (_isListening ? Colors.red : primaryPurple)
-                                          .withOpacity(0.35),
-                                      blurRadius: 14,
-                                      spreadRadius: 2,
-                                    ),
-                                  ],
-                          ),
-                          child: Icon(
-                            isMicBlocked
-                                ? (_isTtsPlaying ? Icons.volume_up_rounded : Icons.hourglass_top_rounded)
-                                : (_isListening ? Icons.stop_rounded : Icons.mic_rounded),
-                            color: Colors.white,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          // Typing / report-generating pill hovers just above the mic.
+          if (_isLoading)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _buildTypingIndicator(),
             ),
-          ),
 
-          const SizedBox(height: 8),
-
-          // ---- Status label + keyboard toggle icon ----
+          // ---- Mic row: keyboard pill | floating mic | balancing spacer ----
+          // Spacers mirror the pill's footprint so the mic stays centered
+          // regardless of pill visibility.
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                isMicBlocked
-                    ? (_isTtsPlaying ? 'AI is speaking...' : 'Thinking...')
-                    : (_isListening ? 'Tap to send' : 'Tap to speak'),
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: isMicBlocked
-                      ? Colors.grey.shade400
-                      : (_isListening ? Colors.red : textGrey),
-                ),
+              SizedBox(
+                width: 44,
+                child: showKeyboardPill
+                    ? _buildKeyboardPill()
+                    : const SizedBox.shrink(),
               ),
-              if (!isMicBlocked && !_isListening) ...[
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: () {
-                    setState(() => _showTextInput = !_showTextInput);
-                    if (_showTextInput) {
-                      Future.delayed(const Duration(milliseconds: 150), () {
-                        _textFocusNode.requestFocus();
-                      });
-                    } else {
-                      _textFocusNode.unfocus();
-                    }
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: _showTextInput
-                          ? primaryPurple.withOpacity(0.15)
-                          : Colors.grey.shade100,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      _showTextInput ? Icons.close_rounded : Icons.keyboard_alt_outlined,
-                      size: 16,
-                      color: _showTextInput ? primaryPurple : Colors.grey.shade500,
-                    ),
-                  ),
-                ),
-              ],
+              const SizedBox(width: 20),
+              _buildFloatingMic(isMicBlocked),
+              const SizedBox(width: 20),
+              const SizedBox(width: 44),
             ],
+          ),
+
+          const SizedBox(height: 4),
+
+          // ---- Status label ----
+          Text(
+            isMicBlocked
+                ? (_isTtsPlaying ? 'AI is speaking...' : 'Thinking...')
+                : (_isListening ? 'Tap to send' : 'Tap to speak'),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: isMicBlocked
+                  ? Colors.grey.shade400
+                  : (_isListening ? Colors.red : textGrey),
+            ),
           ),
 
           // ---- Slide-in text input (AnimatedSize) ----
@@ -1375,22 +1428,32 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
             curve: Curves.easeInOut,
             child: _showTextInput
                 ? Padding(
-                    padding: const EdgeInsets.only(top: 14),
+                    padding: const EdgeInsets.only(top: 12),
                     child: Row(
                       children: [
                         Expanded(
                           child: Container(
                             height: 44,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 16),
                             decoration: BoxDecoration(
-                              color: softBackground,
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(22),
-                              border: Border.all(color: primaryPurple.withOpacity(0.3)),
+                              border: Border.all(
+                                  color: primaryPurple.withOpacity(0.3)),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
                             child: TextField(
                               controller: _controller,
                               focusNode: _textFocusNode,
-                              style: TextStyle(color: textDark, fontSize: 14),
+                              style:
+                                  TextStyle(color: textDark, fontSize: 14),
                               decoration: InputDecoration(
                                 hintText: 'Type your message...',
                                 hintStyle: TextStyle(
@@ -1399,7 +1462,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
                                 ),
                                 border: InputBorder.none,
                                 isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                                contentPadding:
+                                    const EdgeInsets.symmetric(vertical: 12),
                               ),
                               onSubmitted: (text) {
                                 _sendMessage(text);
@@ -1442,6 +1506,163 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
                 : const SizedBox.shrink(),
           ),
         ],
+      ),
+    );
+  }
+
+  // Floating circular mic. Visible layout is the 80px inner puck; the outer
+  // 140px SizedBox exists only to give the ripple/amplitude rings room to
+  // breathe without clipping.
+  Widget _buildFloatingMic(bool isMicBlocked) {
+    return Tooltip(
+      message: isMicBlocked
+          ? (_isTtsPlaying
+              ? 'Wait for AI to finish speaking'
+              : 'Generating response...')
+          : (_isListening ? 'Tap to send' : 'Tap to speak'),
+      child: GestureDetector(
+        onTap: isMicBlocked ? null : _toggleRecording,
+        child: SizedBox(
+          width: 140,
+          height: 140,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Amplitude-reactive ring — pulses outward with the user's voice
+              // while listening. RepaintBoundary keeps the amplitude tick from
+              // repainting the rest of the tree.
+              if (_isListening)
+                RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _micPulseController,
+                    builder: (_, __) {
+                      return CustomPaint(
+                        size: const Size(140, 140),
+                        painter: _MicAmplitudePainter(
+                          amplitude: _currentAmplitude,
+                          pulse: _micPulseController.value,
+                          color: Colors.red,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              // TTS ripple — expanding concentric rings while the AI speaks.
+              if (_isTtsPlaying)
+                RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _ttsRippleController,
+                    builder: (_, __) {
+                      return CustomPaint(
+                        size: const Size(140, 140),
+                        painter: _TtsRipplePainter(
+                          progress: _ttsRippleController.value,
+                          color: primaryPurple,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isMicBlocked
+                      ? Colors.grey.shade200
+                      : (_isListening
+                          ? Colors.red.withOpacity(0.15)
+                          : primaryPurple.withOpacity(0.10)),
+                ),
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isMicBlocked
+                          ? Colors.grey.shade300
+                          : (_isListening ? Colors.red : primaryPurple),
+                      boxShadow: isMicBlocked
+                          ? []
+                          : [
+                              BoxShadow(
+                                color: (_isListening
+                                        ? Colors.red
+                                        : primaryPurple)
+                                    .withOpacity(0.35),
+                                blurRadius: 18,
+                                spreadRadius: 2,
+                              ),
+                            ],
+                    ),
+                    child: Icon(
+                      isMicBlocked
+                          ? (_isTtsPlaying
+                              ? Icons.volume_up_rounded
+                              : Icons.hourglass_top_rounded)
+                          : (_isListening
+                              ? Icons.stop_rounded
+                              : Icons.mic_rounded),
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Small secondary pill that opens the text input. Lives beside the mic so
+  // learners can swap modes without hunting around.
+  Widget _buildKeyboardPill() {
+    return GestureDetector(
+      onTap: () {
+        setState(() => _showTextInput = !_showTextInput);
+        if (_showTextInput) {
+          Future.delayed(const Duration(milliseconds: 150), () {
+            _textFocusNode.requestFocus();
+          });
+        } else {
+          _textFocusNode.unfocus();
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: _showTextInput
+              ? primaryPurple.withOpacity(0.15)
+              : Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: _showTextInput
+                ? primaryPurple.withOpacity(0.5)
+                : Colors.grey.shade300,
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(
+          _showTextInput
+              ? Icons.close_rounded
+              : Icons.keyboard_alt_outlined,
+          size: 20,
+          color: _showTextInput ? primaryPurple : Colors.grey.shade600,
+        ),
       ),
     );
   }
@@ -1596,4 +1817,42 @@ class _TtsRipplePainter extends CustomPainter {
   @override
   bool shouldRepaint(_TtsRipplePainter old) =>
       old.progress != progress || old.color != color;
+}
+
+// Three vertical bars of varying heights — the bot's minimalist sound-wave
+// identity mark, rendered in brand purple inside the bot avatar circle.
+class _SoundWavePainter extends CustomPainter {
+  final Color color;
+
+  _SoundWavePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2.4
+      ..style = PaintingStyle.stroke;
+
+    // Heights chosen so the middle bar is tallest — classic "listening" glyph.
+    const heights = [0.55, 1.0, 0.7];
+    const spacing = 4.5;
+
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final maxBar = size.height * 0.85;
+
+    for (int i = 0; i < 3; i++) {
+      final x = cx + (i - 1) * spacing;
+      final h = maxBar * heights[i];
+      canvas.drawLine(
+        Offset(x, cy - h / 2),
+        Offset(x, cy + h / 2),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SoundWavePainter old) => old.color != color;
 }
