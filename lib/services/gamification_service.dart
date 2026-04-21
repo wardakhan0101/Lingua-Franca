@@ -126,13 +126,17 @@ class GamificationService {
     if (lastActive == null) {
       currentStreak = 1;
     } else {
-      final difference = now.difference(lastActive).inDays;
+      // Compare by local calendar day, not a 24-hour window — so practicing
+      // Mon 11 PM then Tue 9 AM counts as a 2-day streak, matching user intuition.
+      final today = DateTime(now.year, now.month, now.day);
+      final lastDay = DateTime(lastActive.year, lastActive.month, lastActive.day);
+      final difference = today.difference(lastDay).inDays;
       if (difference == 1) {
         currentStreak += 1;
       } else if (difference > 1) {
         currentStreak = 1; // Reset
       }
-      // If difference is 0, do nothing (already active today)
+      // If difference is 0, already practised today — no change.
     }
 
     final int longestStreak = data['longestStreak'] as int? ?? 0;

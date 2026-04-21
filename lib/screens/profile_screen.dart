@@ -210,16 +210,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  String _formatJoinedDate(dynamic joinedAt) {
-    if (joinedAt is Timestamp) {
-      final date = joinedAt.toDate();
-      const months = [
-        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-      ];
-      return '${months[date.month - 1]} ${date.year}';
-    }
-    return '—';
+  String _formatJoinedDate(DateTime? date) {
+    if (date == null) return '—';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.year}';
   }
 
   @override
@@ -245,7 +242,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final int totalSessions = _data['totalSessions'] ?? 0;
     final String level = _data['currentLevel'] ?? 'B1';
     final List<String> badges = List<String>.from(_data['badges'] ?? const []);
-    final String memberSince = _formatJoinedDate(_data['joinedAt']);
+    // Source of truth for signup date is Firebase Auth — it's stamped at account creation
+    // and is accurate even for accounts that pre-date our Firestore 'joinedAt' field.
+    final DateTime? creationTime = user?.metadata.creationTime;
+    final String memberSince = _formatJoinedDate(creationTime);
 
     ImageProvider? avatarImage;
     if (photoBase64 != null && photoBase64.isNotEmpty) {
