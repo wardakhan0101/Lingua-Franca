@@ -52,29 +52,103 @@ class GamificationService {
     return data;
   }
 
-  // Update XP after a session
-  Future<Map<String, int>> updateSessionXp({
+  // Eagerly award every badge that doesn't depend on the grammar result,
+  // so the celebration popup can fire BEFORE the multi-second grammar/
+  // fluency Cloud Run calls complete. This method takes over the
+  // session-count increment and streak update that used to live inside
+  // `updateSessionXp`, so callers MUST run this before `updateSessionXp`
+  // or those counters will never advance.
+  //
+  // Returns the list of newly-earned non-grammar badges. Grammar Wizard is
+  // deliberately excluded — it's handled in `updateSessionXp` once the
+  // grammar API result is known.
+  Future<List<String>> runEagerBadgeCheck({
+    required int durationSeconds,
+  }) async {
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) return <String>[];
+
+    // Snapshot pre-session state so the "first time earning this" guards
+    // evaluate against the old badge list, not a half-written one.
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    final data = userDoc.data() ?? {};
+    final currentBadges = List<String>.from(data['badges'] ?? []);
+
+    // Update streak FIRST so Streak Starter / Weekly Warrior check the new
+    // value in this same pass.
+    final newStreak = await _updateStreak(userId, data);
+
+    // Bump session count so Persistent Learner can use the post-session
+    // total. `_updateStreak` already wrote the user doc, so use `set(merge)`
+    // here to avoid a lost-update race on concurrent fields.
+    await _firestore.collection('users').doc(userId).set({
+      'totalSessions': FieldValue.increment(1),
+    }, SetOptions(merge: true));
+    final newTotalSessions = (data['totalSessions'] as int? ?? 0) + 1;
+
+    final newBadges = <String>[];
+    final now = DateTime.now();
+
+    if (durationSeconds > 180 && !currentBadges.contains('Iron Lung')) {
+      newBadges.add('Iron Lung');
+    }
+    if ((now.hour >= 23 || now.hour < 5) &&
+        !currentBadges.contains('Night Owl')) {
+      newBadges.add('Night Owl');
+    }
+    if ((now.hour >= 5 && now.hour < 9) &&
+        !currentBadges.contains('Early Bird')) {
+      newBadges.add('Early Bird');
+    }
+    if (newStreak >= 3 && !currentBadges.contains('Streak Starter')) {
+      newBadges.add('Streak Starter');
+    }
+    if (newStreak >= 7 && !currentBadges.contains('Weekly Warrior')) {
+      newBadges.add('Weekly Warrior');
+    }
+    if (newTotalSessions >= 10 &&
+        !currentBadges.contains('Persistent Learner')) {
+      newBadges.add('Persistent Learner');
+    }
+    final level = data['currentLevel'] as String? ?? 'B1';
+    if (level == 'B2' && !currentBadges.contains('B2 Master')) {
+      newBadges.add('B2 Master');
+    }
+
+    if (newBadges.isNotEmpty) {
+      await _firestore.collection('users').doc(userId).update({
+        'badges': FieldValue.arrayUnion(newBadges),
+      });
+    }
+
+    return newBadges;
+  }
+
+  // Compute XP for this session and award Grammar Wizard if applicable.
+  //
+  // Assumes `runEagerBadgeCheck` was called FIRST — session count and streak
+  // have already been written, so this method only re-reads the user doc to
+  // pick up the streak multiplier and the current XP baseline.
+  //
+  // Returns `earnedXp` (with streak multiplier applied) plus `newBadges`
+  // which contains `['Grammar Wizard']` when freshly earned, otherwise empty.
+  Future<Map<String, dynamic>> updateSessionXp({
     required GrammarAnalysisResult grammarResult,
     required Map<String, dynamic> fluencyData,
     required int durationSeconds,
   }) async {
     final userId = _auth.currentUser?.uid;
-    if (userId == null) return {'earnedXp': 0};
+    if (userId == null) return {'earnedXp': 0, 'newBadges': <String>[]};
 
-    // 1. Calculate Grammar XP (Aligned with rigorous score %)
-    // We use the grammarScore (0-100) returned by the API as the basis.
+    // 1. Grammar XP
     int grammarXp = grammarResult.summary.grammarScore.toInt();
-    
-    // Add a small bonus for a perfect session
-    if (grammarResult.mistakes.isEmpty) grammarXp += 20; 
-    
+    if (grammarResult.mistakes.isEmpty) grammarXp += 20;
     grammarXp = grammarXp.clamp(0, 120);
 
-    // 2. Calculate Fluency XP (Base 50)
+    // 2. Fluency XP (base 50, subtract for each issue marker)
     int fluencyXp = 50;
-    final annotatedTranscript = fluencyData['annotated_transcript'] as String? ?? '';
-    
-    // Counting markers
+    final annotatedTranscript =
+        fluencyData['annotated_transcript'] as String? ?? '';
     fluencyXp -= _countOccurrences(annotatedTranscript, '[P-major]') * 8;
     fluencyXp -= _countOccurrences(annotatedTranscript, '[S]') * 5;
     fluencyXp -= _countOccurrences(annotatedTranscript, '[FAST]') * 3;
@@ -82,34 +156,40 @@ class GamificationService {
     fluencyXp -= _countOccurrences(annotatedTranscript, '[P-minor]') * 1;
     fluencyXp = fluencyXp.clamp(0, 50);
 
-    // 3. Base & Duration XP
+    // 3. Base + engagement
     int basePracticeXp = 10;
     int engagementXp = durationSeconds ~/ 10;
-
     int totalEarnedXp = grammarXp + fluencyXp + basePracticeXp + engagementXp;
 
-    // 4. Update Streak and Multiplier
+    // 4. Re-read doc to pick up streak value written by the eager pass.
     final userDoc = await _firestore.collection('users').doc(userId).get();
     final data = userDoc.data() ?? {};
-    
-    int streakResult = await _updateStreak(userId, data);
-    double streakMultiplier = 1.0 + (streakResult.clamp(0, 5) * 0.05);
+    final int streakResult = data['currentStreak'] as int? ?? 0;
+    final double streakMultiplier = 1.0 + (streakResult.clamp(0, 5) * 0.05);
     totalEarnedXp = (totalEarnedXp * streakMultiplier).toInt();
 
-    // 5. Save to Firestore (Robust set with merge)
+    // 5. Write XP. Session count was already incremented by the eager pass.
     await _firestore.collection('users').doc(userId).set({
       'totalXp': FieldValue.increment(totalEarnedXp),
-      'totalSessions': FieldValue.increment(1),
     }, SetOptions(merge: true));
 
-    // Check for badges
-    await _checkAndAwardBadges(userId, data, totalEarnedXp, durationSeconds, grammarResult.mistakes.isEmpty);
+    // 6. Grammar Wizard — the only badge that needs the grammar result.
+    final newBadges = <String>[];
+    final currentBadges = List<String>.from(data['badges'] ?? []);
+    if (grammarResult.mistakes.isEmpty &&
+        !currentBadges.contains('Grammar Wizard')) {
+      newBadges.add('Grammar Wizard');
+      await _firestore.collection('users').doc(userId).update({
+        'badges': FieldValue.arrayUnion(['Grammar Wizard']),
+      });
+    }
 
     return {
       'earnedXp': totalEarnedXp,
       'grammarXp': grammarXp,
       'fluencyXp': fluencyXp,
       'streak': streakResult,
+      'newBadges': newBadges,
     };
   }
 
@@ -150,63 +230,6 @@ class GamificationService {
     await _firestore.collection('users').doc(userId).update(updates);
 
     return currentStreak;
-  }
-
-  Future<void> _checkAndAwardBadges(String userId, Map<String, dynamic> data, int sessionXp, int duration, bool isPerfect) async {
-    List<String> currentBadges = List<String>.from(data['badges'] ?? []);
-    List<String> newBadges = [];
-
-    // 1. Iron Lung (3+ min session)
-    if (duration > 180 && !currentBadges.contains('Iron Lung')) {
-      newBadges.add('Iron Lung');
-    }
-    // 2. Grammar Wizard (Perfect session)
-    if (isPerfect && !currentBadges.contains('Grammar Wizard')) {
-      newBadges.add('Grammar Wizard');
-    }
-    
-    // --- NEW BADGES ---
-    
-    final now = DateTime.now();
-    
-    // 3. Night Owl (Practice after 11 PM or before 5 AM)
-    if ((now.hour >= 23 || now.hour < 5) && !currentBadges.contains('Night Owl')) {
-      newBadges.add('Night Owl');
-    }
-    
-    // 4. Early Bird (Practice between 5 AM and 9 AM)
-    if ((now.hour >= 5 && now.hour < 9) && !currentBadges.contains('Early Bird')) {
-      newBadges.add('Early Bird');
-    }
-    
-    // 5. Streak Starter (3 day streak)
-    int currentStreak = data['currentStreak'] as int? ?? 0;
-    if (currentStreak >= 3 && !currentBadges.contains('Streak Starter')) {
-      newBadges.add('Streak Starter');
-    }
-    
-    // 6. Weekly Warrior (7 day streak)
-    if (currentStreak >= 7 && !currentBadges.contains('Weekly Warrior')) {
-      newBadges.add('Weekly Warrior');
-    }
-    
-    // 7. Persistent Learner (10 total sessions)
-    int totalSessions = (data['totalSessions'] as int? ?? 0) + 1; // +1 because we are in the update flow
-    if (totalSessions >= 10 && !currentBadges.contains('Persistent Learner')) {
-      newBadges.add('Persistent Learner');
-    }
-    
-    // 8. B2 Master (Reached B2 level)
-    String level = data['currentLevel'] as String? ?? 'B1';
-    if (level == 'B2' && !currentBadges.contains('B2 Master')) {
-      newBadges.add('B2 Master');
-    }
-
-    if (newBadges.isNotEmpty) {
-      await _firestore.collection('users').doc(userId).update({
-        'badges': FieldValue.arrayUnion(newBadges),
-      });
-    }
   }
 
   // Level Up Gateway

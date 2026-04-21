@@ -21,6 +21,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'unified_report_screen.dart';
 import '../services/gamification_service.dart';
+import '../widgets/achievement_popup.dart';
 
 class ScenarioChatScreen extends StatefulWidget {
   final Scenario scenario;
@@ -716,6 +717,29 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
       return; // Nothing to analyze
     }
 
+    // Compute up-front so both the eager badge check and the XP calc see
+    // the same value (and so we don't drift if the grammar API takes long).
+    final durationSeconds = _startTime != null
+        ? DateTime.now().difference(_startTime!).inSeconds
+        : 0;
+
+    // EAGER BADGE CHECK: fire before the grammar/fluency API calls so the
+    // celebration popup appears within ~1s of ending the chat, not after
+    // the 5–10s Cloud Run roundtrip. Only non-grammar badges are awarded
+    // here; Grammar Wizard is handled after the grammar result is known.
+    try {
+      final eagerBadges = await _gamificationService.runEagerBadgeCheck(
+        durationSeconds: durationSeconds,
+      );
+      if (mounted && eagerBadges.isNotEmpty) {
+        await showAchievementQueue(context, eagerBadges);
+      }
+    } catch (e) {
+      debugPrint("Eager badge check error: $e");
+    }
+
+    if (!mounted) return;
+
     try {
       // 1. GRAMMAR: Batch the entire conversation transcript
       // Join with a period and space so LanguageTool can correctly identify sentence boundaries
@@ -800,11 +824,11 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
       };
       final grammarResult = await grammarFuture;
 
-      // 3. GAMIFICATION: Calculate and Save XP
+      // 3. GAMIFICATION: Calculate and Save XP. Non-grammar badges were
+      // already awarded eagerly; this pass only computes XP and awards
+      // Grammar Wizard if the session was perfect.
       int calculatedXp = 0;
-      final durationSeconds = _startTime != null 
-          ? DateTime.now().difference(_startTime!).inSeconds 
-          : 0;
+      List<String> grammarBadges = const [];
 
       try {
         final xpResults = await _gamificationService.updateSessionXp(
@@ -812,25 +836,34 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
           fluencyData: combinedFluencyResult,
           durationSeconds: durationSeconds,
         );
-        calculatedXp = xpResults['earnedXp'] ?? 0;
+        calculatedXp = (xpResults['earnedXp'] as int?) ?? 0;
+        grammarBadges =
+            List<String>.from(xpResults['newBadges'] as List? ?? const []);
       } catch (e) {
         debugPrint("Gamification Error in scenario chat: $e");
       }
 
-      if (mounted) {
-        setState(() => _isLoading = false);
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => UnifiedReportScreen(
-              grammarResult: grammarResult,
-              fluencyResult: combinedFluencyResult,
-              audioPath: _currentTurnAudioPath, // Pass the last known clip
-              earnedXp: calculatedXp,
-            ),
-          ),
-        );
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      // Grammar Wizard (if earned) shows here — rare, and always a single
+      // popup since Grammar Wizard is the only badge this pass can award.
+      if (grammarBadges.isNotEmpty) {
+        await showAchievementQueue(context, grammarBadges);
       }
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => UnifiedReportScreen(
+            grammarResult: grammarResult,
+            fluencyResult: combinedFluencyResult,
+            audioPath: _currentTurnAudioPath, // Pass the last known clip
+            earnedXp: calculatedXp,
+          ),
+        ),
+      );
     } catch (e) {
       debugPrint("Error generating unified report: $e");
       if (mounted) {
@@ -1333,6 +1366,41 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
 
   Widget _buildInputArea() {
     if (_isFinished) {
+      // While the report is still being generated, swap the green "finished"
+      // banner for the generating-report indicator so the user can see the
+      // app is working. The green banner only applies to the short-lived
+      // terminal state (e.g. no transcripts, nothing to analyze).
+      if (_isLoading) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Colors.grey.shade200)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  valueColor: AlwaysStoppedAnimation(primaryPurple),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Generating report...',
+                style: TextStyle(
+                  color: primaryPurple,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         decoration: BoxDecoration(

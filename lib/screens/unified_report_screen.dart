@@ -46,7 +46,11 @@ class UnifiedReportScreen extends StatelessWidget {
         body: TabBarView(
           children: [
             GrammarReportScreen(result: grammarResult, earnedXp: earnedXp),
-            FluencyScreen(fluencyData: fluencyResult, audioPath: audioPath ?? '', earnedXp: earnedXp),
+            FluencyScreen(
+              fluencyData: fluencyResult,
+              audioPath: audioPath ?? '',
+              earnedXp: earnedXp,
+            ),
           ],
         ),
       ),

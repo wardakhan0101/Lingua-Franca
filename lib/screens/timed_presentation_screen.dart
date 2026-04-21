@@ -13,6 +13,7 @@ import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
 import 'unified_report_screen.dart';
 import '../services/gamification_service.dart';
+import '../widgets/achievement_popup.dart';
 
 final stt = dotenv.env['STT'];
 
@@ -438,6 +439,23 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
 
     setState(() => _isAnalyzing = true);
 
+    // EAGER BADGE CHECK: fire before grammar/fluency so the celebration popup
+    // appears fast instead of after the multi-second Cloud Run roundtrip.
+    // Only non-grammar badges are awarded here; Grammar Wizard is deferred
+    // until after the grammar result is known.
+    try {
+      final eagerBadges = await _gamificationService.runEagerBadgeCheck(
+        durationSeconds: _elapsedSeconds,
+      );
+      if (mounted && eagerBadges.isNotEmpty) {
+        await showAchievementQueue(context, eagerBadges);
+      }
+    } catch (e) {
+      debugPrint("Eager badge check error: $e");
+    }
+
+    if (!mounted) return;
+
     try {
       // 1. Fire both requests but catch errors independently so one failure doesn't crash the other
       final grammarFuture = GrammarApiService.analyzeText(
@@ -490,17 +508,26 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
       final grammarResult = results[0] as GrammarAnalysisResult;
       final fluencyResult = results[1] as Map<String, dynamic>;
 
-      // 3. GAMIFICATION: Calculate and Save XP
+      // 3. GAMIFICATION: Calculate XP and award Grammar Wizard if earned.
+      // Non-grammar badges were already awarded by the eager pass above.
       int calculatedXp = 0;
+      List<String> grammarBadges = const [];
       try {
         final xpResults = await _gamificationService.updateSessionXp(
           grammarResult: grammarResult,
           fluencyData: fluencyResult,
           durationSeconds: _elapsedSeconds,
         );
-        calculatedXp = xpResults['earnedXp'] ?? 0;
+        calculatedXp = (xpResults['earnedXp'] as int?) ?? 0;
+        grammarBadges =
+            List<String>.from(xpResults['newBadges'] as List? ?? const []);
       } catch (e) {
         debugPrint("Gamification Error: $e");
+      }
+
+      // Grammar Wizard popup (only fires for perfect sessions — rare).
+      if (mounted && grammarBadges.isNotEmpty) {
+        await showAchievementQueue(context, grammarBadges);
       }
 
       if (mounted) {

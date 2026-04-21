@@ -1,74 +1,10 @@
 import 'package:flutter/material.dart';
-
-class BadgeModel {
-  final String name;
-  final String description;
-  final IconData icon;
-  final Color color;
-
-  BadgeModel({
-    required this.name,
-    required this.description,
-    required this.icon,
-    required this.color,
-  });
-}
+import '../models/badge_definitions.dart';
 
 class BadgesScreen extends StatelessWidget {
   final List<String> unlockedBadges;
 
-  BadgesScreen({super.key, required this.unlockedBadges});
-
-  final List<BadgeModel> allBadges = [
-    BadgeModel(
-      name: 'Iron Lung',
-      description: 'Complete a speaking session longer than 3 minutes.',
-      icon: Icons.air,
-      color: Colors.blue,
-    ),
-    BadgeModel(
-      name: 'Grammar Wizard',
-      description: 'Complete a perfect session with zero grammar mistakes.',
-      icon: Icons.auto_fix_high,
-      color: Colors.purple,
-    ),
-    BadgeModel(
-      name: 'Night Owl',
-      description: 'Practice late at night (between 11 PM and 5 AM).',
-      icon: Icons.nightlight_round,
-      color: Colors.indigo,
-    ),
-    BadgeModel(
-      name: 'Early Bird',
-      description: 'Start your day with practice (between 5 AM and 9 AM).',
-      icon: Icons.wb_sunny,
-      color: Colors.orange,
-    ),
-    BadgeModel(
-      name: 'Streak Starter',
-      description: 'Maintain a practice streak for 3 consecutive days.',
-      icon: Icons.bolt,
-      color: Colors.amber,
-    ),
-    BadgeModel(
-      name: 'Weekly Warrior',
-      description: 'Demonstrate dedication with a 7-day practice streak.',
-      icon: Icons.workspace_premium,
-      color: Colors.redAccent,
-    ),
-    BadgeModel(
-      name: 'Persistent Learner',
-      description: 'Complete 10 total practice sessions.',
-      icon: Icons.menu_book,
-      color: Colors.green,
-    ),
-    BadgeModel(
-      name: 'B2 Master',
-      description: 'Reach the B2 Upper Intermediate level.',
-      icon: Icons.military_tech,
-      color: Colors.deepOrange,
-    ),
-  ];
+  const BadgesScreen({super.key, required this.unlockedBadges});
 
   @override
   Widget build(BuildContext context) {
@@ -92,9 +28,9 @@ class BadgesScreen extends StatelessWidget {
           mainAxisSpacing: 16,
           childAspectRatio: 0.85,
         ),
-        itemCount: allBadges.length,
+        itemCount: kAllBadges.length,
         itemBuilder: (context, index) {
-          final badge = allBadges[index];
+          final badge = kAllBadges[index];
           final bool isUnlocked = unlockedBadges.contains(badge.name);
 
           return _buildBadgeCard(badge, isUnlocked);
