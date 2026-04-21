@@ -45,4 +45,9 @@ app.*.map.json
 /android/app/release
 .env
 
+# Python virtualenvs for the backend engines (local-only, never tracked)
+Accent_engine/venv/
+fluency_engine/venv/
+grammar_checker/venv/
+
 
