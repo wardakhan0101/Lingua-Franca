@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -922,13 +923,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 12),
             
-            // 3. Freestyle Conversation (Locked)
+            // 3. Freestyle Conversation
             _buildScenarioOption(
               context: context,
               icon: Icons.forum_outlined,
               title: "Freestyle Conversation",
               subtitle: "Open-ended chat with AI",
-              isLocked: true,
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => ScenarioChatScreen(
+                      scenario: _buildFreestyleScenario(),
+                    ),
+                  ),
+                );
+              },
             ),
             
             const SizedBox(height: 24),
@@ -1030,7 +1040,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       id: "job_interview_1",
                       title: "Job Interview",
                       systemPrompt: "You are a senior HR manager at a reputable tech company conducting a real job interview for a junior Software Engineer role. Ask realistic behavioural and technical questions one at a time (e.g. 'Tell me about a challenging project', 'How do you handle deadlines?', 'Describe a conflict with a teammate'). Keep each response/question to 1 sentence (under 12 words). React naturally to the candidate's answers — ask a brief follow-up if their answer is vague. After 8-10 exchanges, thank them professionally, tell them the team will be in touch, then output the exact phrase [END_CONVERSATION] at the very end.",
-                      initialGreeting: "Hello! Thanks for coming in. Please take a seat.",
+                      initialGreeting: "Hello! Please take a seat. Tell me about your technical background.",
                     ),
                   )),
                 );
@@ -1064,6 +1074,37 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Scenario _buildFreestyleScenario() {
+    const openers = [
+      "Hey! How's your day going?",
+      "Hi! What have you been up to?",
+      "Hey there! Anything on your mind today?",
+      "Hi! How's everything with you?",
+      "Hey! What's been good lately?",
+    ];
+    final opener = openers[Random().nextInt(openers.length)];
+    return Scenario(
+      id: 'freestyle_1',
+      title: 'Freestyle Chat',
+      systemPrompt:
+          "You are a warm, curious friend having a casual English conversation with the user. "
+          "This is free-form small talk — their day, their life, their interests, whatever comes up. "
+          "You are NOT a teacher and you do NOT correct them. Instead, silently model good English "
+          "by naturally rephrasing their ideas with better grammar and phrasing in your own replies. "
+          "Never say things like \"you should say X\" or \"the correct word is Y\".\n\n"
+          "Style rules:\n"
+          "- Keep replies short and natural: 1-2 sentences, usually under 20 words.\n"
+          "- Ask a genuine follow-up question most turns to keep the chat flowing.\n"
+          "- Match the user's energy. If they give a short answer, don't lecture.\n"
+          "- If they go quiet or give very short replies, gently offer a new thread (\"By the way, how's your weekend looking?\").\n"
+          "- Stay in English. No emojis, no asterisks, no stage directions.\n\n"
+          "Ending rule:\n"
+          "- After roughly 15-20 user turns, or if the conversation naturally winds down, warmly wrap up in 1 sentence and end your final message with the exact token [END_CONVERSATION].\n"
+          "- If the user clearly wants to stop (\"bye\", \"I have to go\", \"that's it for today\"), wrap up and emit [END_CONVERSATION] immediately.",
+      initialGreeting: opener,
     );
   }
 

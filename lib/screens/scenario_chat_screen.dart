@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:deepgram_speech_to_text/deepgram_speech_to_text.dart';
@@ -26,7 +28,8 @@ class ScenarioChatScreen extends StatefulWidget {
   State<ScenarioChatScreen> createState() => _ScenarioChatScreenState();
 }
 
-class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
+class _ScenarioChatScreenState extends State<ScenarioChatScreen>
+    with TickerProviderStateMixin {
   final List<Map<String, dynamic>> _messages = [];
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -66,9 +69,37 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   final GamificationService _gamificationService = GamificationService();
   DateTime? _startTime;
 
+  // Freestyle mode: soft turn limit so the AI wraps up naturally on long chats.
+  int _userTurnCount = 0;
+  bool _softEndNudgeSent = false;
+  static const int _freestyleSoftEndAfter = 16;
+
+  // Amplitude tracking for mic visualization — updated from record's onAmplitudeChanged.
+  StreamSubscription<Amplitude>? _amplitudeSubscription;
+  double _currentAmplitude = 0.0;
+
+  // Animation controllers. Breathing ring always runs (cheap); ripple only when TTS plays.
+  late final AnimationController _micPulseController;
+  late final AnimationController _ttsRippleController;
+
+  // Track which message timestamps have already animated in, so ListView recycling
+  // doesn't re-trigger the entrance animation mid-scroll.
+  final Set<int> _animatedBubbleKeys = {};
+
   @override
   void initState() {
     super.initState();
+
+    _micPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
+
+    _ttsRippleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+
     // Initialize system context
     _messages.add({
       "role": "system",
@@ -111,7 +142,8 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
       avAudioSessionCategoryOptions:
           AVAudioSessionCategoryOptions.allowBluetooth |
-          AVAudioSessionCategoryOptions.defaultToSpeaker,
+          AVAudioSessionCategoryOptions.defaultToSpeaker |
+          AVAudioSessionCategoryOptions.mixWithOthers,
       avAudioSessionMode: AVAudioSessionMode.spokenAudio,
       avAudioSessionRouteSharingPolicy:
           AVAudioSessionRouteSharingPolicy.defaultPolicy,
@@ -119,11 +151,28 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       androidAudioAttributes: AndroidAudioAttributes(
         contentType: AndroidAudioContentType.speech,
         flags: AndroidAudioFlags.none,
-        usage: AndroidAudioUsage.voiceCommunication,
+        usage: AndroidAudioUsage.media,
       ),
       androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransient,
       androidWillPauseWhenDucked: true,
     ));
+  }
+
+  // Strip hard fillers (um/uh/er/ah/hmm/mhmm and common variants) from the
+  // grammar-bound transcript copy. Keeps "yeah/well/so/like/you know" since
+  // those are legitimate words grammar engines can judge in context.
+  static final RegExp _hardFillerPattern = RegExp(
+    r'\b(u+h+m*|u+m+|e+r+|a+h+|e+h+|h+m+|m+h+m+|mm-?hmm)\b[,.\?!]?\s*',
+    caseSensitive: false,
+  );
+
+  String _stripHardFillers(String text) {
+    final stripped = text
+        .replaceAll(_hardFillerPattern, ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    // Normalize leading punctuation left behind (e.g., ", I went..." → "I went...")
+    return stripped.replaceFirst(RegExp(r'^[,;.\s]+'), '');
   }
 
   void _sendMessage(String text) async {
@@ -134,9 +183,15 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     }
 
     final userMessage = text.trim();
-    
-    // Add to user transcripts so it gets analyzed by Grammar API
-    _userTranscripts.add(userMessage);
+
+    // Grammar API sees a filler-stripped copy; Ollama and the chat UI see the
+    // original. Fluency module already catalogs fillers separately, so nothing
+    // is lost from analytics by removing them here.
+    final userMessageForGrammar = _stripHardFillers(userMessage);
+    if (userMessageForGrammar.isNotEmpty) {
+      _userTranscripts.add(userMessageForGrammar);
+    }
+    _userTurnCount++;
 
     setState(() {
       _messages.add({
@@ -150,6 +205,22 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
     _controller.clear();
     _scrollToBottom();
+
+    // Freestyle mode only: after ~16 user turns, drop in a hidden system nudge so the
+    // AI wraps up naturally on its next 1-2 replies. The existing [END_CONVERSATION]
+    // handler takes it from there. Gated by scenario id so it can't affect the
+    // three scripted scenarios, whose own prompts already self-regulate length.
+    if (widget.scenario.id == 'freestyle_1' &&
+        _userTurnCount >= _freestyleSoftEndAfter &&
+        !_softEndNudgeSent) {
+      _messages.add({
+        "role": "system",
+        "content":
+            "You've had a nice long chat. In your next 1-2 replies, warmly wrap up and end your final message with [END_CONVERSATION].",
+        "isVisible": false,
+      });
+      _softEndNudgeSent = true;
+    }
 
     // Prepare history for Ollama
     List<Map<String, String>> apiMessages =
@@ -264,11 +335,12 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       return;
     }
 
-    setState(() {
-      _isListening = true;
-      _fullTranscript = '';
-      _currentSegment = '';
-    });
+    HapticFeedback.mediumImpact();
+
+    // The old order flipped the UI to "Listening" BEFORE the recorder was open,
+    // which lost the user's first word. New order: warm up the pipeline, start
+    // the mic, buffer any audio captured during the WebSocket handshake, and
+    // only flip the UI once audio is actually being captured.
 
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -283,7 +355,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       _audioFileSink = audioFile.openWrite();
       _writeWavHeader(_audioFileSink!, 0);
 
-      // BUGFIX: Close and replace any leftover StreamController from the previous turn.
+      // Close and replace any leftover StreamController from the previous turn.
       await _audioController?.close();
       _audioController = StreamController<List<int>>.broadcast();
 
@@ -295,27 +367,37 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
           'interim_results': true,
           'encoding': 'linear16',
           'sample_rate': 16000,
+          // Tell Deepgram to transcribe fillers like "yeah", "um", "uh"
+          // instead of dropping them at utterance boundaries.
+          'filler_words': true,
+          // Wait 300ms of silence before finalizing — prevents the model
+          // from cutting off a short first word.
+          'endpointing': 300,
         },
       );
 
-      // BUGFIX: Wrap in runZonedGuarded to catch WebSocketChannelException.
-      // The deepgram package pushes audio to a WebSocket SINK internally.
-      // If the connection drops (e.g. app backgrounded, network cut), the sink
-      // throws a WebSocketChannelException which escapes our onError handler
-      // because it originates from the write-side, not the read-side stream.
-      // runZonedGuarded intercepts ALL async errors in this zone.
+      // Buffer for audio captured before the Deepgram WebSocket is ready.
+      final pendingAudio = <List<int>>[];
+      bool deepgramReady = false;
+
+      // runZonedGuarded catches WebSocketChannelException from the sink side,
+      // which escapes the normal onError handler because it originates from
+      // writes, not the readable stream.
       runZonedGuarded(() {
         _deepgramSubscription = _liveListener!.stream.listen(
           (result) {
-            if (result.transcript != null && result.transcript!.isNotEmpty) {
+            final tr = result.transcript ?? '';
+            debugPrint(
+                '[STT] ${result.isFinal ? "FINAL" : "interim"}: "$tr"');
+            if (tr.isNotEmpty) {
               if (mounted) {
                 setState(() {
                   if (result.isFinal) {
                     _fullTranscript +=
-                        (_fullTranscript.isEmpty ? '' : ' ') + result.transcript!;
+                        (_fullTranscript.isEmpty ? '' : ' ') + tr;
                     _currentSegment = '';
                   } else {
-                    _currentSegment = result.transcript!;
+                    _currentSegment = tr;
                   }
                 });
               }
@@ -328,24 +410,18 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
             _audioController = null;
             _stopListening();
           },
-          cancelOnError: false, // Don't auto-cancel; let onError handle recovery
+          cancelOnError: false,
         );
 
-        // Start Deepgram WebSocket handshake
         _liveListener!.start();
       }, (error, stackTrace) {
-        // Catches WebSocketChannelException and other sink-side async errors
-        // that escape the stream's onError callback.
         debugPrint('Deepgram zone error (likely WebSocket abort): $error');
         _audioController?.close();
         _audioController = null;
         if (_isListening) _stopListening();
       });
 
-      // Wait for WebSocket to fully open before audio starts flowing
-      await Future.delayed(const Duration(milliseconds: 400));
-
-      // NOW start the microphone recorder
+      // Start the mic BEFORE we flip the UI, so the first word is never lost.
       final stream = await _recorder.startStream(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
@@ -354,16 +430,62 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
         ),
       );
 
-      // Pipe recorder audio into both the WAV file and the Deepgram WebSocket
       _audioStreamSubscription = stream.listen((audioData) {
+        // Always write to the local WAV file so fluency analysis gets the full clip.
         _audioFileSink?.add(audioData);
-        if (_audioController != null && !_audioController!.isClosed) {
+
+        // Forward to Deepgram if ready; otherwise buffer for later flush.
+        if (deepgramReady &&
+            _audioController != null &&
+            !_audioController!.isClosed) {
           _audioController!.add(audioData);
+        } else {
+          pendingAudio.add(audioData);
         }
       }, onDone: () {
         _audioController?.close();
         _audioController = null;
       });
+
+      // Drive the amplitude ring around the mic button.
+      _amplitudeSubscription = _recorder
+          .onAmplitudeChanged(const Duration(milliseconds: 80))
+          .listen((amp) {
+        if (!mounted) return;
+        // amp.current is dBFS (~-60 silent, ~0 max). Normalize to 0..1 with some
+        // floor so a totally quiet mic still shows gentle motion.
+        final normalized = ((amp.current + 55) / 45).clamp(0.0, 1.0);
+        setState(() => _currentAmplitude = normalized);
+      });
+
+      // Recorder is hot — flip UI now. Anything the user says from this moment
+      // is being captured (buffered into pendingAudio until Deepgram opens).
+      if (mounted) {
+        setState(() {
+          _isListening = true;
+          _fullTranscript = '';
+          _currentSegment = '';
+        });
+      }
+
+      // Wait for the Deepgram WebSocket to establish, then flush buffered audio.
+      await Future.delayed(const Duration(milliseconds: 400));
+      deepgramReady = true;
+      if (_audioController != null && !_audioController!.isClosed) {
+        // Prime Deepgram's acoustic model with 250ms of silence BEFORE the
+        // user's real audio arrives. Without this, short first words like
+        // "yeah" land during the model's warmup window and get dropped.
+        // PCM 16-bit @ 16kHz mono → 2 bytes/sample. 0.25s = 8000 bytes of 0.
+        const int silencePadBytes = 8000;
+        _audioController!.add(List<int>.filled(silencePadBytes, 0));
+        debugPrint('[STT] Primed Deepgram with 250ms silence, '
+            'flushing ${pendingAudio.length} buffered chunks '
+            '(${pendingAudio.fold<int>(0, (s, c) => s + c.length)} bytes)');
+        for (final chunk in pendingAudio) {
+          _audioController!.add(chunk);
+        }
+      }
+      pendingAudio.clear();
 
     } catch (e) {
       debugPrint('Error starting listener: $e');
@@ -374,11 +496,18 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
   Future<void> _stopListening() async {
     if (!_isListening) return;
 
+    HapticFeedback.lightImpact();
+
     if (mounted) {
-      setState(() => _isListening = false);
+      setState(() {
+        _isListening = false;
+        _currentAmplitude = 0.0;
+      });
     }
 
     try {
+      await _amplitudeSubscription?.cancel();
+      _amplitudeSubscription = null;
       await _recorder.stop();
       await _deepgramSubscription?.cancel();
       _deepgramSubscription = null;
@@ -680,6 +809,9 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
 
   @override
   void dispose() {
+    _amplitudeSubscription?.cancel();
+    _micPulseController.dispose();
+    _ttsRippleController.dispose();
     _recorder.dispose();
     _deepgramSubscription?.cancel();
     _liveListener?.close();
@@ -871,24 +1003,38 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
                       padding: const EdgeInsets.only(left: 20, bottom: 10),
                       child: Row(
                         children: [
-                          SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation(primaryPurple),
+                          if (_isFinished) ...[
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(primaryPurple),
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _isFinished ? 'Generating report...' : 'AI Assistant is typing...',
-                            style: TextStyle(
-                              color: primaryPurple,
-                              fontSize: 12,
-                              fontStyle: FontStyle.italic,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(width: 8),
+                            Text(
+                              'Generating report...',
+                              style: TextStyle(
+                                color: primaryPurple,
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
+                          ] else ...[
+                            _TypingDots(color: primaryPurple),
+                            const SizedBox(width: 10),
+                            Text(
+                              'AI Assistant is typing',
+                              style: TextStyle(
+                                color: primaryPurple,
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -909,62 +1055,124 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
     bool isError = false,
     bool isLive = false,
   }) {
-    return Align(
+    final bubble = Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        margin: const EdgeInsets.only(bottom: 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color:
-              isError
-                  ? Colors.red.shade100
-                  : (isUser ? primaryPurple : Colors.white),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(20),
-            topRight: const Radius.circular(20),
-            bottomLeft: Radius.circular(isUser || isError ? 20 : 4),
-            bottomRight: Radius.circular(isUser ? 4 : 20),
+      child: Opacity(
+        opacity: isLive ? 0.88 : 1.0,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          margin: const EdgeInsets.only(bottom: 12),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 5,
-              offset: const Offset(0, 2),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color:
+                isError
+                    ? Colors.red.shade100
+                    : (isUser ? primaryPurple : Colors.white),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(20),
+              topRight: const Radius.circular(20),
+              bottomLeft: Radius.circular(isUser || isError ? 20 : 4),
+              bottomRight: Radius.circular(isUser ? 4 : 20),
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              text,
-              style: TextStyle(
-                color:
-                    isError
-                        ? Colors.red.shade900
-                        : (isUser ? Colors.white : textDark),
-                fontSize: 15,
-                height: 1.4,
+            border: isLive
+                ? Border.all(color: Colors.white.withOpacity(0.6), width: 1.2)
+                : null,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 5,
+                offset: const Offset(0, 2),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              isLive
-                  ? "Listening..."
-                  : "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}",
-              style: TextStyle(
-                color: isUser ? Colors.white.withOpacity(0.7) : Colors.grey,
-                fontSize: 10,
-                fontStyle: isLive ? FontStyle.italic : FontStyle.normal,
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                text,
+                style: TextStyle(
+                  color:
+                      isError
+                          ? Colors.red.shade900
+                          : (isUser ? Colors.white : textDark),
+                  fontSize: 15,
+                  height: 1.4,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              if (isLive)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedBuilder(
+                      animation: _micPulseController,
+                      builder: (_, __) {
+                        final pulse = 0.5 +
+                            0.5 *
+                                math.sin(_micPulseController.value * 2 * math.pi);
+                        return Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.5 + pulse * 0.5),
+                            shape: BoxShape.circle,
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      "Listening...",
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.75),
+                        fontSize: 10,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Text(
+                  "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}",
+                  style: TextStyle(
+                    color: isUser ? Colors.white.withOpacity(0.7) : Colors.grey,
+                    fontSize: 10,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
+    );
+
+    // Live bubble updates constantly; entrance animation would be distracting.
+    if (isLive) return bubble;
+
+    // One-shot entrance: fade + slide 10px from the sender's side. Keyed by
+    // timestamp so ListView recycling doesn't re-trigger the animation.
+    final key = timestamp.millisecondsSinceEpoch;
+    final shouldAnimate = !_animatedBubbleKeys.contains(key);
+    if (shouldAnimate) _animatedBubbleKeys.add(key);
+    if (!shouldAnimate) return bubble;
+
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(key),
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      builder: (_, t, child) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset((isUser ? 12 : -12) * (1 - t), 0),
+            child: child,
+          ),
+        );
+      },
+      child: bubble,
     );
   }
 
@@ -1020,47 +1228,91 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
                 : (_isListening ? 'Tap to send' : 'Tap to speak'),
             child: GestureDetector(
               onTap: isMicBlocked ? null : _toggleRecording,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isMicBlocked
-                      ? Colors.grey.shade200
-                      : (_isListening
-                          ? Colors.red.withOpacity(0.15)
-                          : primaryPurple.withOpacity(0.1)),
-                ),
-                child: Center(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isMicBlocked
-                          ? Colors.grey.shade300
-                          : (_isListening ? Colors.red : primaryPurple),
-                      boxShadow: isMicBlocked
-                          ? []
-                          : [
-                              BoxShadow(
-                                color: (_isListening ? Colors.red : primaryPurple)
-                                    .withOpacity(0.35),
-                                blurRadius: 14,
-                                spreadRadius: 2,
+              child: SizedBox(
+                width: 140,
+                height: 140,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Amplitude-reactive ring — only while listening. Rebuilds
+                    // cheaply inside a RepaintBoundary so the rest of the tree
+                    // isn't repainted on every amplitude tick.
+                    if (_isListening)
+                      RepaintBoundary(
+                        child: AnimatedBuilder(
+                          animation: _micPulseController,
+                          builder: (_, __) {
+                            return CustomPaint(
+                              size: const Size(140, 140),
+                              painter: _MicAmplitudePainter(
+                                amplitude: _currentAmplitude,
+                                pulse: _micPulseController.value,
+                                color: Colors.red,
                               ),
-                            ],
+                            );
+                          },
+                        ),
+                      ),
+                    // TTS ripple — expanding concentric rings while AI speaks.
+                    if (_isTtsPlaying)
+                      RepaintBoundary(
+                        child: AnimatedBuilder(
+                          animation: _ttsRippleController,
+                          builder: (_, __) {
+                            return CustomPaint(
+                              size: const Size(140, 140),
+                              painter: _TtsRipplePainter(
+                                progress: _ttsRippleController.value,
+                                color: primaryPurple,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isMicBlocked
+                            ? Colors.grey.shade200
+                            : (_isListening
+                                ? Colors.red.withOpacity(0.15)
+                                : primaryPurple.withOpacity(0.1)),
+                      ),
+                      child: Center(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isMicBlocked
+                                ? Colors.grey.shade300
+                                : (_isListening ? Colors.red : primaryPurple),
+                            boxShadow: isMicBlocked
+                                ? []
+                                : [
+                                    BoxShadow(
+                                      color: (_isListening ? Colors.red : primaryPurple)
+                                          .withOpacity(0.35),
+                                      blurRadius: 14,
+                                      spreadRadius: 2,
+                                    ),
+                                  ],
+                          ),
+                          child: Icon(
+                            isMicBlocked
+                                ? (_isTtsPlaying ? Icons.volume_up_rounded : Icons.hourglass_top_rounded)
+                                : (_isListening ? Icons.stop_rounded : Icons.mic_rounded),
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                        ),
+                      ),
                     ),
-                    child: Icon(
-                      isMicBlocked
-                          ? (_isTtsPlaying ? Icons.volume_up_rounded : Icons.hourglass_top_rounded)
-                          : (_isListening ? Icons.stop_rounded : Icons.mic_rounded),
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -1193,4 +1445,155 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen> {
       ),
     );
   }
+}
+
+// Three fading dots for the "AI is typing" indicator — more expressive than a
+// spinner, matches the chat-app idiom learners already recognize.
+class _TypingDots extends StatefulWidget {
+  final Color color;
+  const _TypingDots({required this.color});
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            // Stagger the three dots across the cycle.
+            final phase = (_c.value + i * 0.18) % 1.0;
+            // Tent function peaking at phase=0.5.
+            final t = 1.0 - ((phase - 0.5).abs() * 2).clamp(0.0, 1.0);
+            final opacity = 0.3 + 0.7 * t;
+            final scale = 0.75 + 0.25 * t;
+            return Padding(
+              padding: EdgeInsets.only(right: i < 2 ? 4 : 0),
+              child: Transform.scale(
+                scale: scale,
+                child: Opacity(
+                  opacity: opacity,
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: widget.color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+// Breathing ring + amplitude-reactive ring around the mic button while
+// listening. The breathing ring signals "mic is active"; the amplitude ring
+// signals "mic is hearing you."
+class _MicAmplitudePainter extends CustomPainter {
+  final double amplitude; // 0..1 normalized audio level
+  final double pulse; // 0..1 breathing cycle
+  final Color color;
+
+  _MicAmplitudePainter({
+    required this.amplitude,
+    required this.pulse,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    const baseRadius = 40.0; // matches inner mic circle radius
+
+    final breathing = math.sin(pulse * 2 * math.pi) * 2.5;
+    final idleRadius = baseRadius + 12 + breathing;
+    canvas.drawCircle(
+      center,
+      idleRadius,
+      Paint()
+        ..color = color.withOpacity(0.18)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+
+    if (amplitude > 0.05) {
+      final ampRadius = baseRadius + 14 + amplitude * 22;
+      canvas.drawCircle(
+        center,
+        ampRadius,
+        Paint()
+          ..color = color.withOpacity(0.15 + amplitude * 0.25)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5 + amplitude * 3,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_MicAmplitudePainter old) =>
+      old.amplitude != amplitude ||
+      old.pulse != pulse ||
+      old.color != color;
+}
+
+// Three concentric rings expanding outward from the mic button while TTS is
+// playing — signals "AI is talking back" without needing a waveform.
+class _TtsRipplePainter extends CustomPainter {
+  final double progress; // 0..1 controller value
+  final Color color;
+
+  _TtsRipplePainter({required this.progress, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    const baseRadius = 42.0;
+    const maxRadius = 66.0;
+
+    for (int i = 0; i < 3; i++) {
+      final phase = (progress + i / 3) % 1.0;
+      final radius = baseRadius + phase * (maxRadius - baseRadius);
+      final opacity = (1 - phase) * 0.32;
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..color = color.withOpacity(opacity)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.2,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TtsRipplePainter old) =>
+      old.progress != progress || old.color != color;
 }
