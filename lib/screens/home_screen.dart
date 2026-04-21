@@ -259,10 +259,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic> _userStats = {};
   bool _isLoading = true;
 
+  // Null when unknown (user hasn't set a username and has no displayName, or
+  // Firestore hasn't responded yet). Scenarios fall back to their generic
+  // greeting + systemPrompt when this is null.
+  String? _username;
+
   @override
   void initState() {
     super.initState();
     _loadUserStats();
+    _loadUsername();
     // Warm up the Cloud Run APIs in the background.
     // This wakes up the servers before the user actually starts a session.
     GrammarApiService.analyzeText('warmup').catchError((_) {});
@@ -283,6 +289,42 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint("Error loading stats: $e");
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // Fetches the user's preferred name with the same fallback chain the Profile
+  // screen uses: Firestore users/{uid}.username → Firebase Auth displayName →
+  // null. Silent on error — if anything goes wrong we simply don't personalize.
+  Future<void> _loadUsername() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      if (!mounted) return;
+      final firestoreName = (doc.data()?['username'] as String?)?.trim();
+      final authName = user.displayName?.trim();
+      final resolved = (firestoreName != null && firestoreName.isNotEmpty)
+          ? firestoreName
+          : (authName != null && authName.isNotEmpty ? authName : null);
+      if (resolved != null) {
+        setState(() => _username = resolved);
+      }
+    } catch (e) {
+      debugPrint('Could not load username (non-fatal): $e');
+    }
+  }
+
+  // Appends a name-aware block to a scenario's system prompt when we know the
+  // user's name. The AI is told it *may* use the name naturally but should not
+  // force it — leaves the roleplay integrity of scripted scenarios intact.
+  String _withUserContext(String systemPrompt) {
+    final name = _username;
+    if (name == null || name.isEmpty) return systemPrompt;
+    return '$systemPrompt\n\n'
+        'You are talking with $name. Use their name naturally when it fits the '
+        'scene, but do not force it or overuse it.';
   }
 
   @override
@@ -483,15 +525,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWelcomeBanner(Color primary, String level) {
-    // Determine dynamic greeting based on time of day
+    // Determine dynamic greeting based on time of day. Fall back to "Learner"
+    // when we don't have a username yet (fresh install, pre-Firestore-fetch,
+    // or account from before the username field existed).
     final hour = DateTime.now().hour;
+    final displayName = (_username != null && _username!.isNotEmpty)
+        ? _username!
+        : 'Learner';
     String greeting;
     if (hour < 12) {
-      greeting = 'Good Morning, Learner!';
+      greeting = 'Good Morning, $displayName!';
     } else if (hour < 17) {
-      greeting = 'Good Afternoon, Learner!';
+      greeting = 'Good Afternoon, $displayName!';
     } else {
-      greeting = 'Good Evening, Learner!';
+      greeting = 'Good Evening, $displayName!';
     }
 
     // Rotating Tip of the Day
@@ -1012,11 +1059,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (context) => ScenarioChatScreen(
-                    scenario: const Scenario(
+                    scenario: Scenario(
                       id: "fast_food_1",
                       title: "Ordering Fast Food",
-                      // UPDATED IN PHASE 5: Adding [END_CONVERSATION] instruction
-                      systemPrompt: "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses extremely short and conversational. You MUST respond with only 1 short sentence per turn (maximum 10 words). Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them in one short sentence. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
+                      systemPrompt: _withUserContext(
+                        "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses extremely short and conversational. You MUST respond with only 1 short sentence per turn (maximum 10 words). Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them in one short sentence. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
+                      ),
                       initialGreeting: "Hi there! Welcome to Burger Haven. What can I get for you today?",
                     ),
                   )),
@@ -1036,10 +1084,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (context) => ScenarioChatScreen(
-                    scenario: const Scenario(
+                    scenario: Scenario(
                       id: "job_interview_1",
                       title: "Job Interview",
-                      systemPrompt: "You are a senior HR manager at a reputable tech company conducting a real job interview for a junior Software Engineer role. Ask realistic behavioural and technical questions one at a time (e.g. 'Tell me about a challenging project', 'How do you handle deadlines?', 'Describe a conflict with a teammate'). Keep each response/question to 1 sentence (under 12 words). React naturally to the candidate's answers — ask a brief follow-up if their answer is vague. After 8-10 exchanges, thank them professionally, tell them the team will be in touch, then output the exact phrase [END_CONVERSATION] at the very end.",
+                      systemPrompt: _withUserContext(
+                        "You are a senior HR manager at a reputable tech company conducting a real job interview for a junior Software Engineer role. Ask realistic behavioural and technical questions one at a time (e.g. 'Tell me about a challenging project', 'How do you handle deadlines?', 'Describe a conflict with a teammate'). Keep each response/question to 1 sentence (under 12 words). React naturally to the candidate's answers — ask a brief follow-up if their answer is vague. After 8-10 exchanges, thank them professionally, tell them the team will be in touch, then output the exact phrase [END_CONVERSATION] at the very end.",
+                      ),
                       initialGreeting: "Hello! Please take a seat. Tell me about your technical background.",
                     ),
                   )),
@@ -1059,10 +1109,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (context) => ScenarioChatScreen(
-                    scenario: const Scenario(
+                    scenario: Scenario(
                       id: "travel_hotel_1",
                       title: "Travel & Hotel",
-                      systemPrompt: "You are a polite hotel front-desk receptionist at a mid-range hotel. Keep every response to 1 short sentence (under 12 words). Ask one question at a time. Help the guest check in: ask for their name, confirm reservation, explain breakfast hours, and hand over the key card. After check-in is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your final message.",
+                      systemPrompt: _withUserContext(
+                        "You are a polite hotel front-desk receptionist at a mid-range hotel. Keep every response to 1 short sentence (under 12 words). Ask one question at a time. Help the guest check in: ask for their name, confirm reservation, explain breakfast hours, and hand over the key card. After check-in is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your final message.",
+                      ),
                       initialGreeting: "Good evening! Welcome to Grand Stay Hotel. How may I help you?",
                     ),
                   )),
@@ -1078,32 +1130,40 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Scenario _buildFreestyleScenario() {
+    final name = _username;
+    // Each opener has a {n} slot. We substitute " $name" if we have one,
+    // or an empty string when we don't — so "Hey{n}!" becomes either
+    // "Hey Romaisa!" or just "Hey!" without any awkward spacing.
     const openers = [
-      "Hey! How's your day going?",
-      "Hi! What have you been up to?",
-      "Hey there! Anything on your mind today?",
-      "Hi! How's everything with you?",
-      "Hey! What's been good lately?",
+      "Hey{n}! How's your day going?",
+      "Hi{n}! What have you been up to?",
+      "Hey there{n}! Anything on your mind today?",
+      "Hi{n}! How's everything?",
+      "Hey{n}! What's been good lately?",
     ];
-    final opener = openers[Random().nextInt(openers.length)];
+    final insertion = (name != null && name.isNotEmpty) ? " $name" : "";
+    final opener = openers[Random().nextInt(openers.length)]
+        .replaceFirst('{n}', insertion);
+
     return Scenario(
       id: 'freestyle_1',
       title: 'Freestyle Chat',
-      systemPrompt:
-          "You are a warm, curious friend having a casual English conversation with the user. "
-          "This is free-form small talk — their day, their life, their interests, whatever comes up. "
-          "You are NOT a teacher and you do NOT correct them. Instead, silently model good English "
-          "by naturally rephrasing their ideas with better grammar and phrasing in your own replies. "
-          "Never say things like \"you should say X\" or \"the correct word is Y\".\n\n"
-          "Style rules:\n"
-          "- Keep replies short and natural: 1-2 sentences, usually under 20 words.\n"
-          "- Ask a genuine follow-up question most turns to keep the chat flowing.\n"
-          "- Match the user's energy. If they give a short answer, don't lecture.\n"
-          "- If they go quiet or give very short replies, gently offer a new thread (\"By the way, how's your weekend looking?\").\n"
-          "- Stay in English. No emojis, no asterisks, no stage directions.\n\n"
-          "Ending rule:\n"
-          "- After roughly 15-20 user turns, or if the conversation naturally winds down, warmly wrap up in 1 sentence and end your final message with the exact token [END_CONVERSATION].\n"
-          "- If the user clearly wants to stop (\"bye\", \"I have to go\", \"that's it for today\"), wrap up and emit [END_CONVERSATION] immediately.",
+      systemPrompt: _withUserContext(
+        "You are a warm, curious friend having a casual English conversation with the user. "
+        "This is free-form small talk — their day, their life, their interests, whatever comes up. "
+        "You are NOT a teacher and you do NOT correct them. Instead, silently model good English "
+        "by naturally rephrasing their ideas with better grammar and phrasing in your own replies. "
+        "Never say things like \"you should say X\" or \"the correct word is Y\".\n\n"
+        "Style rules:\n"
+        "- Keep replies short and natural: 1-2 sentences, usually under 20 words.\n"
+        "- Ask a genuine follow-up question most turns to keep the chat flowing.\n"
+        "- Match the user's energy. If they give a short answer, don't lecture.\n"
+        "- If they go quiet or give very short replies, gently offer a new thread (\"By the way, how's your weekend looking?\").\n"
+        "- Stay in English. No emojis, no asterisks, no stage directions.\n\n"
+        "Ending rule:\n"
+        "- After roughly 15-20 user turns, or if the conversation naturally winds down, warmly wrap up in 1 sentence and end your final message with the exact token [END_CONVERSATION].\n"
+        "- If the user clearly wants to stop (\"bye\", \"I have to go\", \"that's it for today\"), wrap up and emit [END_CONVERSATION] immediately.",
+      ),
       initialGreeting: opener,
     );
   }
