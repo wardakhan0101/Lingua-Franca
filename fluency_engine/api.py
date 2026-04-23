@@ -735,6 +735,9 @@ async def analyze_audio(file: UploadFile = File(...)):
             "stutters": stutters,
             "fast_phrases": fast_phrases,
             "word_count": len(all_words),
+            # Exposed so the pronunciation engine can reuse Whisper's word
+            # timings without re-transcribing the same audio.
+            "whisper_words": all_words,
         }
 
     except Exception as e:

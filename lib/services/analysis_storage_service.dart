@@ -85,4 +85,47 @@ class AnalysisStorageService {
       rethrow;
     }
   }
+
+  // Store pronunciation analysis result from pronunciation_engine.
+  // Preserves the full per-word + phoneme_stats payload so later screens
+  // (history, progress tracking) can render the same breakdown shown in
+  // the report screen.
+  Future<void> storePronunciationAnalysis({
+    required Map<String, dynamic> pronunciationData,
+    required String audioPath,
+  }) async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) {
+        throw Exception('User not authenticated');
+      }
+
+      final overall = (pronunciationData['overall_score'] as num?)?.toInt() ?? 0;
+      final perWord = (pronunciationData['per_word'] as List?) ?? const [];
+      final phonemeStats =
+          (pronunciationData['phoneme_stats'] as Map?) ?? const {};
+
+      final analysisData = {
+        'userId': userId,
+        'type': 'pronunciation',
+        'timestamp': FieldValue.serverTimestamp(),
+        'overallScore': overall,
+        'perWord': perWord,
+        'phonemeStats': phonemeStats,
+        'audioPath': audioPath,
+        'wordCount': perWord.length,
+      };
+
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('analyses')
+          .add(analysisData);
+
+      print('✓ Pronunciation analysis stored successfully');
+    } catch (e) {
+      print('Error storing pronunciation analysis: $e');
+      rethrow;
+    }
+  }
 }

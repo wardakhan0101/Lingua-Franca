@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/grammar_api_service.dart';
 import '../services/fluency_api_service.dart';
+import '../services/pronunciation_api_service.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
 import 'unified_report_screen.dart';
@@ -63,8 +64,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
     _scrollController = ScrollController();
 
     // Warm up the Cloud Run APIs in the background.
-    GrammarApiService.analyzeText('warmup').catchError((_) {});
-    FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) {});
+    GrammarApiService.analyzeText('warmup').ignore();
+    FluencyApiService.analyzeAudio('/tmp/dummy.wav').ignore();
   }
 
   // --- Logic ---
@@ -499,35 +500,76 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
           "stutters": [],
           "pauses": [],
           "fast_phrases": [],
+          "whisper_words": [],
         };
       });
 
-      // 2. Await both (neither will throw now due to catchError)
-      final results = await Future.wait([grammarFuture, fluencyFuture]);
+      // Pronunciation depends on fluency's Whisper word timings — chain off
+      // fluencyFuture so both fluency and grammar still run in parallel, and
+      // pronunciation kicks in the moment fluency's words are available.
+      final pronunciationFuture = fluencyFuture.then<Map<String, dynamic>?>((
+        fluencyResult,
+      ) {
+        final words = fluencyResult['whisper_words'] as List?;
+        if (words == null || words.isEmpty) {
+          debugPrint("Skipping pronunciation: no whisper_words from fluency.");
+          return null;
+        }
+        final whisperWords =
+            words
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+        final transcript =
+            (fluencyResult['transcript'] as String?) ?? textToAnalyze;
+        return PronunciationApiService.analyzePronunciation(
+          audioPath: pathToUse,
+          transcript: transcript,
+          whisperWords: whisperWords,
+        ).then<Map<String, dynamic>?>((r) => r).catchError((e) {
+          debugPrint("Pronunciation API error gracefully caught: $e");
+          return null;
+        });
+      });
+
+      // 2. Await all three (pronunciation may resolve to null if unavailable).
+      final results = await Future.wait(
+        [grammarFuture, fluencyFuture, pronunciationFuture],
+      );
 
       final grammarResult = results[0] as GrammarAnalysisResult;
       final fluencyResult = results[1] as Map<String, dynamic>;
+      final pronunciationResult = results[2] as Map<String, dynamic>?;
 
-      // 3. GAMIFICATION: Calculate XP and award Grammar Wizard if earned.
-      // Non-grammar badges were already awarded by the eager pass above.
+      // 3. GAMIFICATION: Calculate XP and award Grammar Wizard + pronunciation
+      // badges if earned. Non-grammar badges were already awarded by the eager
+      // pass above.
       int calculatedXp = 0;
-      List<String> grammarBadges = const [];
+      List<String> earnedBadges = const [];
       try {
+        final pronunciationScore =
+            (pronunciationResult?['overall_score'] as num?)?.toInt();
+        final phonemeStats = pronunciationResult?['phoneme_stats'] as Map?;
         final xpResults = await _gamificationService.updateSessionXp(
           grammarResult: grammarResult,
           fluencyData: fluencyResult,
           durationSeconds: _elapsedSeconds,
+          pronunciationScore: pronunciationScore,
+          phonemeStats:
+              phonemeStats == null
+                  ? null
+                  : Map<String, dynamic>.from(phonemeStats),
         );
         calculatedXp = (xpResults['earnedXp'] as int?) ?? 0;
-        grammarBadges =
+        earnedBadges =
             List<String>.from(xpResults['newBadges'] as List? ?? const []);
       } catch (e) {
         debugPrint("Gamification Error: $e");
       }
 
-      // Grammar Wizard popup (only fires for perfect sessions — rare).
-      if (mounted && grammarBadges.isNotEmpty) {
-        await showAchievementQueue(context, grammarBadges);
+      // Badge popup (Grammar Wizard / Clear Speaker / etc.).
+      if (mounted && earnedBadges.isNotEmpty) {
+        await showAchievementQueue(context, earnedBadges);
       }
 
       if (mounted) {
@@ -538,6 +580,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
                 (context) => UnifiedReportScreen(
                   grammarResult: grammarResult,
                   fluencyResult: fluencyResult,
+                  pronunciationResult: pronunciationResult,
                   audioPath: pathToUse,
                   earnedXp: calculatedXp,
                 ),

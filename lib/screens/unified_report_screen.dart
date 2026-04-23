@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import '../services/grammar_api_service.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
+import 'pronunciation_report_screen.dart';
 
 class UnifiedReportScreen extends StatelessWidget {
   final GrammarAnalysisResult grammarResult;
   final Map<String, dynamic> fluencyResult;
+  final Map<String, dynamic>? pronunciationResult;
   final String? audioPath;
   final int earnedXp;
 
@@ -14,13 +16,15 @@ class UnifiedReportScreen extends StatelessWidget {
     required this.grammarResult,
     required this.fluencyResult,
     required this.audioPath,
+    this.pronunciationResult,
     this.earnedXp = 0,
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasPronunciation = pronunciationResult != null;
     return DefaultTabController(
-      length: 2,
+      length: hasPronunciation ? 3 : 2,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FB),
         appBar: AppBar(
@@ -31,15 +35,23 @@ class UnifiedReportScreen extends StatelessWidget {
           backgroundColor: Colors.white,
           elevation: 0,
           leading: const BackButton(color: Colors.black87),
-          bottom: const TabBar(
-            labelColor: Color(0xFF6C63FF),
+          bottom: TabBar(
+            labelColor: const Color(0xFF6C63FF),
             unselectedLabelColor: Colors.grey,
-            indicatorColor: Color(0xFF6C63FF),
+            indicatorColor: const Color(0xFF6C63FF),
             indicatorWeight: 3,
-            labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            // Smaller font + horizontal padding tightens the third tab so
+            // "Pronunciation" fits alongside Grammar/Fluency without
+            // clipping on narrower devices.
+            labelStyle: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+            labelPadding: const EdgeInsets.symmetric(horizontal: 8),
             tabs: [
-              Tab(text: "Grammar"),
-              Tab(text: "Fluency"),
+              const Tab(text: "Grammar"),
+              const Tab(text: "Fluency"),
+              if (hasPronunciation) const Tab(text: "Pronunciation"),
             ],
           ),
         ),
@@ -51,6 +63,12 @@ class UnifiedReportScreen extends StatelessWidget {
               audioPath: audioPath ?? '',
               earnedXp: earnedXp,
             ),
+            if (hasPronunciation)
+              PronunciationReportScreen(
+                pronunciationData: pronunciationResult!,
+                audioPath: audioPath ?? '',
+                earnedXp: earnedXp,
+              ),
           ],
         ),
       ),

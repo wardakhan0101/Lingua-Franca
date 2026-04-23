@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+models/
+.pytest_cache/
+tests/audio/*.wav
+tests/audio/*.mp3
+tests/audio/*.m4a
+validation_report.md

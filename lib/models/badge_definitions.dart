@@ -70,6 +70,30 @@ const List<BadgeModel> kAllBadges = [
     icon: Icons.military_tech,
     color: Colors.deepOrange,
   ),
+  BadgeModel(
+    name: 'Clear Speaker',
+    description: 'Score 80% or higher on pronunciation in your first session.',
+    icon: Icons.record_voice_over,
+    color: Colors.green,
+  ),
+  BadgeModel(
+    name: 'Phoneme Master',
+    description: 'Complete 10 sessions with at least 85% pronunciation.',
+    icon: Icons.stars,
+    color: Colors.purple,
+  ),
+  BadgeModel(
+    name: 'TH Conqueror',
+    description: 'Correctly produce the /θ/ or /ð/ sound 20 times across sessions.',
+    icon: Icons.emoji_events,
+    color: Colors.orange,
+  ),
+  BadgeModel(
+    name: 'Accent Warrior',
+    description: 'Improve your average pronunciation score by 15+ points.',
+    icon: Icons.trending_up,
+    color: Colors.teal,
+  ),
 ];
 
 // Case-sensitive lookup by badge name. Returns null for unknown names so

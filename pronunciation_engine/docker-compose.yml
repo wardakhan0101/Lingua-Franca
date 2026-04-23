@@ -1,0 +1,11 @@
+services:
+  pronunciation_engine:
+    build: .
+    ports:
+      - "8001:8001"
+    volumes:
+      - model_cache:/app/models
+    restart: unless-stopped
+
+volumes:
+  model_cache:

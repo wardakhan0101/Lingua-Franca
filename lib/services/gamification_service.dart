@@ -29,6 +29,13 @@ class GamificationService {
         'totalSessions': 0,
         'badges': [],
         'joinedAt': FieldValue.serverTimestamp(),
+        // Pronunciation tracking. `firstSessionPronAvg` is null until the
+        // user's first pronunciation-scored session, after which it is frozen
+        // so "Accent Warrior" can measure improvement from that baseline.
+        'pronunciationAvg': 0.0,
+        'firstSessionPronAvg': null,
+        'pronunciationScores': <int>[],
+        'phonemeStats': <String, dynamic>{},
       };
       await _firestore.collection('users').doc(userId).set(initialData);
       // Re-read so the serverTimestamp resolves to a concrete value.
@@ -44,6 +51,18 @@ class GamificationService {
     }
     if (!data.containsKey('joinedAt')) {
       backfill['joinedAt'] = FieldValue.serverTimestamp();
+    }
+    if (!data.containsKey('pronunciationAvg')) {
+      backfill['pronunciationAvg'] = 0.0;
+    }
+    if (!data.containsKey('firstSessionPronAvg')) {
+      backfill['firstSessionPronAvg'] = null;
+    }
+    if (!data.containsKey('pronunciationScores')) {
+      backfill['pronunciationScores'] = <int>[];
+    }
+    if (!data.containsKey('phonemeStats')) {
+      backfill['phonemeStats'] = <String, dynamic>{};
     }
     if (backfill.isNotEmpty) {
       await _firestore.collection('users').doc(userId).set(backfill, SetOptions(merge: true));
@@ -136,6 +155,11 @@ class GamificationService {
     required GrammarAnalysisResult grammarResult,
     required Map<String, dynamic> fluencyData,
     required int durationSeconds,
+    // Optional so existing callers keep working while pronunciation rolls out.
+    // Pass `null` (or omit) when pronunciation analysis didn't run for this
+    // session — nothing XP / badge-wise will change from pronunciation.
+    int? pronunciationScore,
+    Map<String, dynamic>? phonemeStats,
   }) async {
     final userId = _auth.currentUser?.uid;
     if (userId == null) return {'earnedXp': 0, 'newBadges': <String>[]};
@@ -159,28 +183,132 @@ class GamificationService {
     // 3. Base + engagement
     int basePracticeXp = 10;
     int engagementXp = durationSeconds ~/ 10;
-    int totalEarnedXp = grammarXp + fluencyXp + basePracticeXp + engagementXp;
 
-    // 4. Re-read doc to pick up streak value written by the eager pass.
+    // 4. Pronunciation XP — 0..40 from the score, +10 clean-delivery bonus.
+    int pronunciationXp = 0;
+    if (pronunciationScore != null) {
+      pronunciationXp = (pronunciationScore / 2.5).toInt();
+      final stats = phonemeStats ?? const <String, dynamic>{};
+      final bool noPhonemeUnder70 = stats.values.every((entry) {
+        if (entry is! Map) return true;
+        final total = (entry['expected'] as num?)?.toInt() ?? 0;
+        final correct = (entry['correct'] as num?)?.toInt() ?? 0;
+        if (total == 0) return true;
+        return (correct / total) >= 0.7;
+      });
+      if (noPhonemeUnder70 && pronunciationScore >= 60) {
+        pronunciationXp += 10;
+      }
+      pronunciationXp = pronunciationXp.clamp(0, 50);
+    }
+
+    int totalEarnedXp =
+        grammarXp + fluencyXp + basePracticeXp + engagementXp + pronunciationXp;
+
+    // 5. Re-read doc to pick up streak value written by the eager pass.
     final userDoc = await _firestore.collection('users').doc(userId).get();
     final data = userDoc.data() ?? {};
     final int streakResult = data['currentStreak'] as int? ?? 0;
     final double streakMultiplier = 1.0 + (streakResult.clamp(0, 5) * 0.05);
     totalEarnedXp = (totalEarnedXp * streakMultiplier).toInt();
 
-    // 5. Write XP. Session count was already incremented by the eager pass.
-    await _firestore.collection('users').doc(userId).set({
+    // 6. Write XP + pronunciation tracking fields.
+    final Map<String, dynamic> updates = {
       'totalXp': FieldValue.increment(totalEarnedXp),
-    }, SetOptions(merge: true));
+    };
+    if (pronunciationScore != null) {
+      final prevScores = List<int>.from(
+        (data['pronunciationScores'] as List?)?.map(
+              (e) => (e as num).toInt(),
+            ) ??
+            const <int>[],
+      );
+      final newScores = [...prevScores, pronunciationScore];
+      final newAvg =
+          newScores.reduce((a, b) => a + b) / newScores.length;
 
-    // 6. Grammar Wizard — the only badge that needs the grammar result.
+      updates['pronunciationScores'] = newScores;
+      updates['pronunciationAvg'] = newAvg;
+      if (data['firstSessionPronAvg'] == null) {
+        updates['firstSessionPronAvg'] = pronunciationScore;
+      }
+      if (phonemeStats != null && phonemeStats.isNotEmpty) {
+        final mergedPhonemeStats = _mergePhonemeStats(
+          Map<String, dynamic>.from(
+            data['phonemeStats'] as Map? ?? const {},
+          ),
+          phonemeStats,
+        );
+        updates['phonemeStats'] = mergedPhonemeStats;
+      }
+    }
+    await _firestore
+        .collection('users')
+        .doc(userId)
+        .set(updates, SetOptions(merge: true));
+
+    // 7. Badges that depend on grammar/pronunciation results.
     final newBadges = <String>[];
     final currentBadges = List<String>.from(data['badges'] ?? []);
+
     if (grammarResult.mistakes.isEmpty &&
         !currentBadges.contains('Grammar Wizard')) {
       newBadges.add('Grammar Wizard');
+    }
+
+    if (pronunciationScore != null) {
+      // Read post-write state for badge conditions that need fresh totals.
+      final postScores = List<int>.from(
+        (updates['pronunciationScores'] as List?) ?? const <int>[],
+      );
+      final double postAvg =
+          (updates['pronunciationAvg'] as double?) ??
+              ((data['pronunciationAvg'] as num?)?.toDouble() ?? 0.0);
+      final double firstAvg =
+          ((data['firstSessionPronAvg'] ?? updates['firstSessionPronAvg'])
+                      as num?)
+                  ?.toDouble() ??
+              pronunciationScore.toDouble();
+      final Map<String, dynamic> postPhonemeStats =
+          Map<String, dynamic>.from(
+        (updates['phonemeStats'] as Map?) ??
+            (data['phonemeStats'] as Map? ?? const {}),
+      );
+      final int totalSessionsPost =
+          (data['totalSessions'] as int? ?? 0);
+
+      // Clear Speaker — first session at 80%+.
+      if (postScores.length == 1 &&
+          pronunciationScore >= 80 &&
+          !currentBadges.contains('Clear Speaker')) {
+        newBadges.add('Clear Speaker');
+      }
+
+      // Phoneme Master — 10 sessions at 85%+.
+      final masterCount = postScores.where((s) => s >= 85).length;
+      if (masterCount >= 10 && !currentBadges.contains('Phoneme Master')) {
+        newBadges.add('Phoneme Master');
+      }
+
+      // TH Conqueror — combined correct count for /θ/ and /ð/ ≥ 20.
+      final thetaCorrect = _readCorrect(postPhonemeStats, 'θ');
+      final ethCorrect = _readCorrect(postPhonemeStats, 'ð');
+      if (thetaCorrect + ethCorrect >= 20 &&
+          !currentBadges.contains('TH Conqueror')) {
+        newBadges.add('TH Conqueror');
+      }
+
+      // Accent Warrior — needs at least 4 sessions of data to be meaningful.
+      if (totalSessionsPost >= 4 &&
+          (postAvg - firstAvg) >= 15 &&
+          !currentBadges.contains('Accent Warrior')) {
+        newBadges.add('Accent Warrior');
+      }
+    }
+
+    if (newBadges.isNotEmpty) {
       await _firestore.collection('users').doc(userId).update({
-        'badges': FieldValue.arrayUnion(['Grammar Wizard']),
+        'badges': FieldValue.arrayUnion(newBadges),
       });
     }
 
@@ -188,9 +316,60 @@ class GamificationService {
       'earnedXp': totalEarnedXp,
       'grammarXp': grammarXp,
       'fluencyXp': fluencyXp,
+      'pronunciationXp': pronunciationXp,
       'streak': streakResult,
       'newBadges': newBadges,
     };
+  }
+
+  int _readCorrect(Map<String, dynamic> stats, String phoneme) {
+    final entry = stats[phoneme];
+    if (entry is Map) {
+      return (entry['correct'] as num?)?.toInt() ?? 0;
+    }
+    return 0;
+  }
+
+  // Merge per-session phoneme stats into the stored cumulative map.
+  Map<String, dynamic> _mergePhonemeStats(
+    Map<String, dynamic> existing,
+    Map<String, dynamic> incoming,
+  ) {
+    final Map<String, dynamic> out = {
+      for (final e in existing.entries)
+        e.key: Map<String, dynamic>.from(e.value as Map),
+    };
+
+    incoming.forEach((phoneme, rawValue) {
+      if (rawValue is! Map) return;
+      final inc = Map<String, dynamic>.from(rawValue);
+      final slot = out[phoneme] ?? <String, dynamic>{
+        'expected': 0,
+        'correct': 0,
+        'substitutions': <String, dynamic>{},
+      };
+      slot['expected'] =
+          (slot['expected'] as int? ?? 0) +
+              ((inc['expected'] as num?)?.toInt() ?? 0);
+      slot['correct'] =
+          (slot['correct'] as int? ?? 0) +
+              ((inc['correct'] as num?)?.toInt() ?? 0);
+
+      final Map<String, dynamic> subs = Map<String, dynamic>.from(
+        slot['substitutions'] as Map? ?? const {},
+      );
+      final incSubs = inc['substitutions'];
+      if (incSubs is Map) {
+        incSubs.forEach((k, v) {
+          final key = k.toString();
+          subs[key] = (subs[key] as int? ?? 0) + ((v as num?)?.toInt() ?? 0);
+        });
+      }
+      slot['substitutions'] = subs;
+      out[phoneme] = slot;
+    });
+
+    return out;
   }
 
   int _countOccurrences(String text, String marker) {

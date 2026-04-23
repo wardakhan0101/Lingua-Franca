@@ -15,6 +15,7 @@ import '../models/scenario.dart';
 import '../services/ollama_api_service.dart';
 import '../services/fluency_api_service.dart';
 import '../services/grammar_api_service.dart';
+import '../services/pronunciation_api_service.dart';
 import '../services/tts_api_service.dart';
 import '../services/my_audio_source.dart';
 import 'package:just_audio/just_audio.dart';
@@ -74,6 +75,9 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
   String? _currentTurnAudioPath;
   final List<Map<String, dynamic>> _turnFluencyResults = [];
   final List<Future<void>> _activeFluencyTasks = []; // Track pending background tasks
+  // Pronunciation results collected per turn — merged in _endConversation.
+  final List<Map<String, dynamic>> _turnPronunciationResults = [];
+  final List<Future<void>> _activePronunciationTasks = [];
   final List<String> _userTranscripts = [];
   final GamificationService _gamificationService = GamificationService();
   DateTime? _startTime;
@@ -131,7 +135,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
 
     _initAudioSession().then((_) async {
       // Pre-warm the Grammar API Cloud Run instance in the background.
-      GrammarApiService.analyzeText('warmup').catchError((_) {});
+      GrammarApiService.analyzeText('warmup').ignore();
 
       _startTime = DateTime.now(); // Start tracking session duration
 
@@ -591,8 +595,13 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
 
   void _processTurnFluency(String audioPath) {
     debugPrint("Queuing background fluency analysis for turn...");
-    
-    final futureObj = FluencyApiService.analyzeAudio(audioPath).then((result) {
+
+    // Capture fluency result locally so we can kick off pronunciation as
+    // soon as this specific turn's whisper_words are available — without
+    // racing across turns.
+    final fluencyFuture = FluencyApiService.analyzeAudio(audioPath);
+
+    final fluencyBookkeeping = fluencyFuture.then((result) {
       if (mounted) {
         _turnFluencyResults.add(result);
         debugPrint("Successfully captured fluency result for turn.");
@@ -609,8 +618,39 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
         });
       }
     });
+    _activeFluencyTasks.add(fluencyBookkeeping);
 
-    _activeFluencyTasks.add(futureObj);
+    // Chain pronunciation off the same fluency future so the turn's Whisper
+    // word timings can be reused — no re-transcription.
+    final pronunciationFuture = fluencyFuture.then((fluencyResult) async {
+      final words = fluencyResult['whisper_words'] as List?;
+      if (words == null || words.isEmpty) {
+        debugPrint("Skipping pronunciation for turn: no whisper_words.");
+        return;
+      }
+      final whisperWords =
+          words
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+      final transcript = (fluencyResult['transcript'] as String?) ?? '';
+      try {
+        final result = await PronunciationApiService.analyzePronunciation(
+          audioPath: audioPath,
+          transcript: transcript,
+          whisperWords: whisperWords,
+        );
+        if (mounted) {
+          _turnPronunciationResults.add(result);
+          debugPrint(
+            "Captured pronunciation result for turn (score=${result['overall_score']}).",
+          );
+        }
+      } catch (e) {
+        debugPrint("Background pronunciation failed for turn: $e");
+      }
+    });
+    _activePronunciationTasks.add(pronunciationFuture);
   }
 
   // --- Audio File Handling ---
@@ -764,10 +804,14 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
         );
       });
 
-      // 2. FLUENCY: Aggregate the background queue results
-      // Await all pending fluency API requests so we don't drop the latest audio turn!
+      // 2. FLUENCY + PRONUNCIATION: Aggregate the background queue results.
+      // Await all pending per-turn fluency AND pronunciation requests so we
+      // don't drop the latest audio turn!
       if (_activeFluencyTasks.isNotEmpty) {
         await Future.wait(_activeFluencyTasks);
+      }
+      if (_activePronunciationTasks.isNotEmpty) {
+        await Future.wait(_activePronunciationTasks);
       }
 
       List<dynamic> combinedFluencyIssues = [];
@@ -830,11 +874,28 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
       int calculatedXp = 0;
       List<String> grammarBadges = const [];
 
+      // Merge per-turn pronunciation results into a session-level aggregate.
+      Map<String, dynamic>? combinedPronunciationResult;
+      if (_turnPronunciationResults.isNotEmpty) {
+        combinedPronunciationResult = PronunciationApiService.mergeTurnResults(
+          _turnPronunciationResults,
+        );
+      }
+
       try {
+        final pronunciationScore =
+            (combinedPronunciationResult?['overall_score'] as num?)?.toInt();
+        final phonemeStats =
+            combinedPronunciationResult?['phoneme_stats'] as Map?;
         final xpResults = await _gamificationService.updateSessionXp(
           grammarResult: grammarResult,
           fluencyData: combinedFluencyResult,
           durationSeconds: durationSeconds,
+          pronunciationScore: pronunciationScore,
+          phonemeStats:
+              phonemeStats == null
+                  ? null
+                  : Map<String, dynamic>.from(phonemeStats),
         );
         calculatedXp = (xpResults['earnedXp'] as int?) ?? 0;
         grammarBadges =
@@ -846,8 +907,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
       if (!mounted) return;
       setState(() => _isLoading = false);
 
-      // Grammar Wizard (if earned) shows here — rare, and always a single
-      // popup since Grammar Wizard is the only badge this pass can award.
+      // Badge popup — now may include pronunciation badges on top of Grammar Wizard.
       if (grammarBadges.isNotEmpty) {
         await showAchievementQueue(context, grammarBadges);
       }
@@ -859,6 +919,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
           builder: (context) => UnifiedReportScreen(
             grammarResult: grammarResult,
             fluencyResult: combinedFluencyResult,
+            pronunciationResult: combinedPronunciationResult,
             audioPath: _currentTurnAudioPath, // Pass the last known clip
             earnedXp: calculatedXp,
           ),
