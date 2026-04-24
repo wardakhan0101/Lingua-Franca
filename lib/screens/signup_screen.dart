@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
 import 'package:lingua_franca/screens/assessment_screen.dart';
+import 'package:lingua_franca/theme/app_colors.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -97,7 +98,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       width: 120,
                       height: 120,
                       decoration: const BoxDecoration(
-                        color: Color(0xFF6B72AB),
+                        color: AppColors.primary,
                         shape: BoxShape.circle,
                       ),
                       child: ClipOval( // Use ClipOval to ensure circular shape
@@ -260,7 +261,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         onPressed: _isLoading ? null : _handleSignUp,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF6B72AB),
+                          foregroundColor: AppColors.primary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -272,7 +273,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
                                   valueColor: AlwaysStoppedAnimation<Color>(
-                                    Color(0xFF6B72AB),
+                                    AppColors.primary,
                                   ),
                                 ),
                               )

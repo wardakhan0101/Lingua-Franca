@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
-import 'package:lingua_franca/screens/home_screen.dart';
+import 'package:lingua_franca/screens/root_scaffold.dart';
 import 'package:lingua_franca/screens/assessment_screen.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/services/gamification_service.dart';
+import 'package:lingua_franca/theme/app_theme.dart';
 // import 'package:flutter_gemma/core/api/flutter_gemma.dart';
 
 void main() async {
@@ -24,10 +25,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Lingua Franca',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6B72AB)),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light,
       home: const AuthWrapper(),
     );
   }
@@ -62,16 +60,16 @@ class AuthWrapper extends StatelessWidget {
               return const _FullPageLoader();
             }
             if (statsSnap.hasError) {
-              // If we can't reach Firestore, fall through to Home — the app
-              // is still largely usable and the user can retry from there.
-              return const HomeScreen();
+              // If we can't reach Firestore, fall through to the app shell —
+              // it's still largely usable and the user can retry from there.
+              return const RootScaffold();
             }
             final stats = statsSnap.data ?? const <String, dynamic>{};
             final done = stats['hasCompletedInitialAssessment'] == true;
             if (!done) {
               return const AssessmentScreen(mode: AssessmentMode.initial);
             }
-            return const HomeScreen();
+            return const RootScaffold();
           },
         );
       },

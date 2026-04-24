@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/signup_screen.dart';
 import 'package:lingua_franca/screens/forgot_password_screen.dart';
-import 'package:lingua_franca/screens/home_screen.dart';
+import 'package:lingua_franca/screens/root_scaffold.dart';
+import 'package:lingua_franca/theme/app_colors.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -40,7 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
         
         if (mounted) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
+            MaterialPageRoute(builder: (context) => const RootScaffold()),
           );
         }
       } catch (e) {
@@ -90,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       width: 120,
                       height: 120,
                       decoration: const BoxDecoration(
-                        color: Color(0xFF6B72AB),
+                        color: AppColors.primary,
                         shape: BoxShape.circle,
                       ),
                       child: ClipOval( // Use ClipOval to ensure circular shape
@@ -208,7 +209,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         onPressed: _isLoading ? null : _handleLogin,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF6B72AB),
+                          foregroundColor: AppColors.primary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -220,7 +221,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
                                   valueColor: AlwaysStoppedAnimation<Color>(
-                                    Color(0xFF6B72AB),
+                                    AppColors.primary,
                                   ),
                                 ),
                               )

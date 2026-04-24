@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/badge_definitions.dart';
+import '../theme/app_colors.dart';
 
 // Celebration dialog shown when the user earns a new badge. Styling mirrors
 // `_buildBadgeCard` in `badges_screen.dart` so the reveal matches the icon
@@ -17,9 +18,9 @@ class AchievementPopup extends StatefulWidget {
 
 class _AchievementPopupState extends State<AchievementPopup>
     with SingleTickerProviderStateMixin {
-  static const Color _primaryPurple = Color(0xFF8A48F0);
-  static const Color _textDark = Color(0xFF101828);
-  static const Color _textGrey = Color(0xFF667085);
+  static const Color _primaryPurple = AppColors.primary;
+  static const Color _textDark = AppColors.textPrimary;
+  static const Color _textGrey = AppColors.textSecondary;
 
   // Bright, complementary confetti palette. Keep these independent of the
   // badge color so every celebration feels festive regardless of which badge

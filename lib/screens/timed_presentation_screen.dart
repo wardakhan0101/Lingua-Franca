@@ -7,9 +7,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:deepgram_speech_to_text/deepgram_speech_to_text.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import '../services/analysis_storage_service.dart';
 import '../services/grammar_api_service.dart';
 import '../services/fluency_api_service.dart';
 import '../services/pronunciation_api_service.dart';
+import '../theme/app_colors.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
 import 'unified_report_screen.dart';
@@ -96,7 +98,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Time's up! Generating report..."),
-          backgroundColor: Color(0xFF6C63FF),
+          backgroundColor: AppColors.primary,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -170,13 +172,13 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
                         return ChoiceChip(
                           label: Text(_getDurationLabel(seconds)),
                           selected: isSelected,
-                          selectedColor: const Color(0xFF6C63FF),
+                          selectedColor: AppColors.primary,
                           backgroundColor: const Color(0xFFF5F3FF),
                           labelStyle: TextStyle(
                             color:
                                 isSelected
                                     ? Colors.white
-                                    : const Color(0xFF6C63FF),
+                                    : AppColors.primary,
                           ),
                           side: BorderSide.none,
                           shape: RoundedRectangleBorder(
@@ -572,6 +574,21 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
         await showAchievementQueue(context, earnedBadges);
       }
 
+      // Generate a shared id so grammar/fluency/pronunciation docs can be
+      // joined back into one session by Profile → fetchLatestSession.
+      // Grammar is persisted here (it has no report screen of its own);
+      // fluency + pronunciation persist inside their respective tabs on
+      // first mount, using the same sessionId we pass through below.
+      final sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+      try {
+        await AnalysisStorageService().storeGrammarAnalysis(
+          sessionId: sessionId,
+          result: grammarResult,
+        );
+      } catch (e) {
+        debugPrint('storeGrammarAnalysis failed: $e');
+      }
+
       if (mounted) {
         Navigator.push(
           context,
@@ -583,6 +600,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
                   pronunciationResult: pronunciationResult,
                   audioPath: pathToUse,
                   earnedXp: calculatedXp,
+                  sessionId: sessionId,
                 ),
           ),
         );
@@ -625,7 +643,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
     if (progress < 0) progress = 0;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7FA), // softBackground
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text(
           "Presentation Practice",
@@ -679,7 +697,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
                                 Text(
                                   "TOPIC",
                                   style: TextStyle(
-                                    color: Color(0xFF6C63FF),
+                                    color: AppColors.primary,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w800,
                                     letterSpacing: 1.2,
@@ -709,9 +727,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
                             child: CustomPaint(
                               painter: TimerPainter(
                                 progress: progress,
-                                color: const Color(
-                                  0xFF7630E1,
-                                ), // Gold from Dashboard Icons
+                                color: AppColors.primaryDark, // Gold from Dashboard Icons
                               ),
                               child: Center(
                                 child: Column(
@@ -955,14 +971,14 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
               height: 20,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Color(0xFF6C63FF),
+                color: AppColors.primary,
               ),
             ),
             SizedBox(width: 12),
             Text(
               "Analyzing speech...",
               style: TextStyle(
-                color: Color(0xFF6C63FF),
+                color: AppColors.primary,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1028,11 +1044,11 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
             child: Container(
               height: 56,
               decoration: BoxDecoration(
-                color: const Color(0xFF6C63FF),
+                color: AppColors.primary,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF6C63FF).withValues(alpha: 0.4),
+                    color: AppColors.primary.withValues(alpha: 0.4),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -1081,12 +1097,12 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
           height: 72,
           width: 72,
           decoration: BoxDecoration(
-            color: const Color(0xFF6C63FF), // Brand Purple
+            color: AppColors.primary, // Brand Purple
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 4),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF6C63FF).withValues(alpha: 0.4),
+                color: AppColors.primary.withValues(alpha: 0.4),
                 blurRadius: 15,
                 offset: const Offset(0, 5),
               ),

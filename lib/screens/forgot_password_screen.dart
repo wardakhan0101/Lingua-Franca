@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lingua_franca/services/auth_service.dart';
+import 'package:lingua_franca/theme/app_colors.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -96,7 +97,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             width: 120,
                             height: 120,
                             decoration: const BoxDecoration(
-                              color: Color(0xFF6B72AB),
+                              color: AppColors.primary,
                               shape: BoxShape.circle,
                             ),
                             child: ClipOval( // Use ClipOval to ensure circular shape
@@ -170,7 +171,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               onPressed: _isLoading ? null : _handleResetPassword,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.white,
-                                foregroundColor: const Color(0xFF6B72AB),
+                                foregroundColor: AppColors.primary,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -182,7 +183,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
                                         valueColor: AlwaysStoppedAnimation<Color>(
-                                          Color(0xFF6B72AB),
+                                          AppColors.primary,
                                         ),
                                       ),
                                     )

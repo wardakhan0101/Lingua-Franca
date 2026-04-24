@@ -15,7 +15,7 @@ import '../services/assessment_question_service.dart';
 import '../services/assessment_service.dart';
 import '../services/gamification_service.dart';
 import 'assessment_result_screen.dart';
-import 'home_screen.dart';
+import 'root_scaffold.dart';
 
 /// Drives the initial placement OR a level-up test. Wizard of:
 /// intro → 3 grammar Qs → 3 fluency Qs → 3 pronunciation Qs → grading
@@ -227,7 +227,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
             result: result,
             onContinue: () {
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const HomeScreen()),
+                MaterialPageRoute(builder: (_) => const RootScaffold()),
                 (route) => false,
               );
             },
@@ -524,7 +524,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     }
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      MaterialPageRoute(builder: (_) => const RootScaffold()),
       (route) => false,
     );
   }

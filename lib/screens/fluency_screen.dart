@@ -4,17 +4,25 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../services/analysis_storage_service.dart';
+import '../theme/app_colors.dart';
 
 class FluencyScreen extends StatefulWidget {
   final Map<String, dynamic> fluencyData;
   final String audioPath; // Path to the recorded user audio
   final int earnedXp;
+  // Shared session id for Firestore. Null when isHistorical = true.
+  final String? sessionId;
+  // When true, this is a past session re-opened from Profile — skip the
+  // Firestore write in _storeAnalysisResults so we don't duplicate the doc.
+  final bool isHistorical;
 
   const FluencyScreen({
-    super.key, 
-    required this.fluencyData, 
+    super.key,
+    required this.fluencyData,
     required this.audioPath,
     this.earnedXp = 0,
+    this.sessionId,
+    this.isHistorical = false,
   });
 
   @override
@@ -221,16 +229,25 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
     return RichText(text: TextSpan(children: spans));
   }
 
-  // Store the analysis results in Firebase
+  // Store the analysis results in Firebase.
+  //
+  // Skipped when this is a historical view (re-opened from Profile) — the
+  // doc already exists and re-writing would create a duplicate.
   Future<void> _storeAnalysisResults() async {
+    if (widget.isHistorical) return;
+    if (widget.sessionId == null) {
+      // Live session without a sessionId should never happen now that
+      // timed_presentation / scenario_chat always supply one, but be defensive.
+      debugPrint('Fluency store skipped: no sessionId');
+      return;
+    }
     try {
-      if (widget.audioPath != null) {
-        await _storageService.storeFluencyAnalysis(
-          transcript: _transcript,
-          fluencyIssues: _fluencyIssues,
-          audioPath: widget.audioPath!,
-        );
-      }
+      await _storageService.storeFluencyAnalysis(
+        sessionId: widget.sessionId!,
+        fluencyData: widget.fluencyData,
+        audioPath: widget.audioPath,
+        fluencyScore: _calculateFluencyScore(),
+      );
     } catch (e) {
       debugPrint("Failed to store fluency analysis in Firebase: $e");
       // Don't show error to user, just log it
@@ -243,7 +260,7 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FB),
+      backgroundColor: AppColors.background,
       extendBodyBehindAppBar: false,
       appBar: AppBar(
         title: const Text(
@@ -316,8 +333,10 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
 
                     const SizedBox(height: 24),
 
-                    // 1.5 XP Earned Card
-                    Container(
+                    // 1.5 XP Earned Card — hidden on historical re-opens
+                    // (Profile → View full report) since no XP is being earned.
+                    if (!widget.isHistorical)
+                      Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
@@ -397,14 +416,14 @@ class _FluencyScreenState extends State<FluencyScreen> with AutomaticKeepAliveCl
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF6C63FF).withValues(alpha: 0.1),
+                            color: AppColors.primary.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: const Color(0xFF6C63FF).withValues(alpha: 0.2)),
+                            border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
                           ),
                           child: Text(
                             "${_fluencyIssues.length} Issues",
                             style: const TextStyle(
-                              color: Color(0xFF6C63FF),
+                              color: AppColors.primary,
                               fontWeight: FontWeight.bold,
                               fontSize: 12,
                             ),

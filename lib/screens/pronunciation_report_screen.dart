@@ -5,17 +5,25 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../services/analysis_storage_service.dart';
+import '../theme/app_colors.dart';
 
 class PronunciationReportScreen extends StatefulWidget {
   final Map<String, dynamic> pronunciationData;
   final String audioPath;
   final int earnedXp;
+  // Shared session id for Firestore. Null when isHistorical = true.
+  final String? sessionId;
+  // When true, this is a past session re-opened from Profile — skip the
+  // Firestore write so we don't duplicate the doc.
+  final bool isHistorical;
 
   const PronunciationReportScreen({
     super.key,
     required this.pronunciationData,
     required this.audioPath,
     this.earnedXp = 0,
+    this.sessionId,
+    this.isHistorical = false,
   });
 
   @override
@@ -32,8 +40,8 @@ class _PronunciationReportScreenState extends State<PronunciationReportScreen>
   Duration? _stopAt;
   bool _storedOnce = false;
 
-  static const Color _accent = Color(0xFF6C63FF);
-  static const Color _bg = Color(0xFFF5F7FB);
+  static const Color _accent = AppColors.primary;
+  static const Color _bg = AppColors.background;
 
   @override
   bool get wantKeepAlive => true;
@@ -66,8 +74,15 @@ class _PronunciationReportScreenState extends State<PronunciationReportScreen>
   Future<void> _persistOnce() async {
     if (_storedOnce) return;
     _storedOnce = true;
+    // Re-opening a past session from Profile — doc already exists.
+    if (widget.isHistorical) return;
+    if (widget.sessionId == null) {
+      debugPrint('Pronunciation store skipped: no sessionId');
+      return;
+    }
     try {
       await _storage.storePronunciationAnalysis(
+        sessionId: widget.sessionId!,
         pronunciationData: widget.pronunciationData,
         audioPath: widget.audioPath,
       );

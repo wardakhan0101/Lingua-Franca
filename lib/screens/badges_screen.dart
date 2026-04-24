@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/badge_definitions.dart';
+import '../theme/app_colors.dart';
 
 class BadgesScreen extends StatelessWidget {
   final List<String> unlockedBadges;
@@ -9,16 +10,16 @@ class BadgesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7FA),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text(
           'All Achievements',
-          style: TextStyle(color: Color(0xFF101828), fontWeight: FontWeight.bold),
+          style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        iconTheme: const IconThemeData(color: Color(0xFF101828)),
+        iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: GridView.builder(
         padding: const EdgeInsets.all(20),
@@ -74,7 +75,7 @@ class BadgesScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: isUnlocked ? const Color(0xFF101828) : Colors.grey.shade400,
+              color: isUnlocked ? AppColors.textPrimary : Colors.grey.shade400,
             ),
           ),
           const SizedBox(height: 8),
@@ -85,7 +86,7 @@ class BadgesScreen extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 11,
-                color: isUnlocked ? const Color(0xFF667085) : Colors.grey.shade300,
+                color: isUnlocked ? AppColors.textSecondary : Colors.grey.shade300,
               ),
             ),
           ),

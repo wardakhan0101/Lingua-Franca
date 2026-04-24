@@ -12,6 +12,7 @@ import 'package:deepgram_speech_to_text/deepgram_speech_to_text.dart';
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scenario.dart';
+import '../services/analysis_storage_service.dart';
 import '../services/ollama_api_service.dart';
 import '../services/fluency_api_service.dart';
 import '../services/grammar_api_service.dart';
@@ -22,6 +23,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'unified_report_screen.dart';
 import '../services/gamification_service.dart';
+import '../theme/app_colors.dart';
 import '../widgets/achievement_popup.dart';
 
 class ScenarioChatScreen extends StatefulWidget {
@@ -43,12 +45,12 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
   bool _showTextInput = false; // Toggles the slide-in text field
   final FocusNode _textFocusNode = FocusNode();
 
-  final Color primaryPurple = const Color(0xFF8A48F0);
-  final Color primaryPurpleDeep = const Color(0xFF6332D1);
-  final Color secondaryPurple = const Color(0xFFD9BFFF);
-  final Color softBackground = const Color(0xFFF7F7FA);
-  final Color textDark = const Color(0xFF101828);
-  final Color textGrey = const Color(0xFF667085);
+  final Color primaryPurple = AppColors.primary;
+  final Color primaryPurpleDeep = AppColors.primaryDark;
+  final Color secondaryPurple = AppColors.primaryLight;
+  final Color softBackground = AppColors.background;
+  final Color textDark = AppColors.textPrimary;
+  final Color textGrey = AppColors.textSecondary;
 
   // User avatar data (base64 photo stored in Firestore under users/{uid}).
   Uint8List? _userAvatarBytes;
@@ -912,6 +914,19 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
         await showAchievementQueue(context, grammarBadges);
       }
 
+      // Shared session id so fetchLatestSession can join the three docs.
+      // Grammar is persisted here; fluency + pronunciation persist inside
+      // their report tabs on first mount with this same id.
+      final sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+      try {
+        await AnalysisStorageService().storeGrammarAnalysis(
+          sessionId: sessionId,
+          result: grammarResult,
+        );
+      } catch (e) {
+        debugPrint('storeGrammarAnalysis failed: $e');
+      }
+
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
@@ -922,6 +937,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
             pronunciationResult: combinedPronunciationResult,
             audioPath: _currentTurnAudioPath, // Pass the last known clip
             earnedXp: calculatedXp,
+            sessionId: sessionId,
           ),
         ),
       );

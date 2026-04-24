@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/grammar_api_service.dart';
+import '../theme/app_colors.dart';
 import 'grammar_report_screen.dart';
 import 'fluency_screen.dart';
 import 'pronunciation_report_screen.dart';
@@ -10,6 +11,13 @@ class UnifiedReportScreen extends StatelessWidget {
   final Map<String, dynamic>? pronunciationResult;
   final String? audioPath;
   final int earnedXp;
+  // Shared id for the three analysis docs (grammar/fluency/pronunciation)
+  // persisted at session completion. Null when re-opening a past report via
+  // `isHistorical: true` since we're not writing anything.
+  final String? sessionId;
+  // When true, this is a past session being re-opened from Profile — child
+  // screens skip their per-mount Firestore writes so we don't duplicate docs.
+  final bool isHistorical;
 
   const UnifiedReportScreen({
     super.key,
@@ -18,6 +26,8 @@ class UnifiedReportScreen extends StatelessWidget {
     required this.audioPath,
     this.pronunciationResult,
     this.earnedXp = 0,
+    this.sessionId,
+    this.isHistorical = false,
   });
 
   @override
@@ -26,7 +36,7 @@ class UnifiedReportScreen extends StatelessWidget {
     return DefaultTabController(
       length: hasPronunciation ? 3 : 2,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F7FB),
+        backgroundColor: AppColors.background,
         appBar: AppBar(
           title: const Text(
             "Performance Analysis",
@@ -36,9 +46,9 @@ class UnifiedReportScreen extends StatelessWidget {
           elevation: 0,
           leading: const BackButton(color: Colors.black87),
           bottom: TabBar(
-            labelColor: const Color(0xFF6C63FF),
+            labelColor: AppColors.primary,
             unselectedLabelColor: Colors.grey,
-            indicatorColor: const Color(0xFF6C63FF),
+            indicatorColor: AppColors.primary,
             indicatorWeight: 3,
             // Smaller font + horizontal padding tightens the third tab so
             // "Pronunciation" fits alongside Grammar/Fluency without
@@ -57,17 +67,25 @@ class UnifiedReportScreen extends StatelessWidget {
         ),
         body: TabBarView(
           children: [
-            GrammarReportScreen(result: grammarResult, earnedXp: earnedXp),
+            GrammarReportScreen(
+              result: grammarResult,
+              earnedXp: earnedXp,
+              isHistorical: isHistorical,
+            ),
             FluencyScreen(
               fluencyData: fluencyResult,
               audioPath: audioPath ?? '',
               earnedXp: earnedXp,
+              sessionId: sessionId,
+              isHistorical: isHistorical,
             ),
             if (hasPronunciation)
               PronunciationReportScreen(
                 pronunciationData: pronunciationResult!,
                 audioPath: audioPath ?? '',
                 earnedXp: earnedXp,
+                sessionId: sessionId,
+                isHistorical: isHistorical,
               ),
           ],
         ),

@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 import '../services/grammar_api_service.dart';
+import '../theme/app_colors.dart';
 
 class GrammarReportScreen extends StatefulWidget {
   final GrammarAnalysisResult result;
   final int earnedXp; // NEW
+  // When true, this is a past session re-opened from Profile — XP card is
+  // hidden because no XP is being earned in this view.
+  final bool isHistorical;
 
-  const GrammarReportScreen({super.key, required this.result, required this.earnedXp});
+  const GrammarReportScreen({
+    super.key,
+    required this.result,
+    required this.earnedXp,
+    this.isHistorical = false,
+  });
 
   @override
   State<GrammarReportScreen> createState() => _GrammarReportScreenState();
@@ -21,7 +30,7 @@ class _GrammarReportScreenState extends State<GrammarReportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FB),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text(
           'Grammar Report',
@@ -178,12 +187,19 @@ class _GrammarReportScreenState extends State<GrammarReportScreen> {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildStatCard(
-                'Grammar XP',
-                '+${widget.earnedXp}',
-                Icons.bolt_rounded,
-                const Color(0xFFFFD700),
-              ),
+              child: widget.isHistorical
+                  ? _buildStatCard(
+                      'Sentences',
+                      widget.result.summary.sentenceCount.toString(),
+                      Icons.segment_rounded,
+                      Colors.purple,
+                    )
+                  : _buildStatCard(
+                      'Grammar XP',
+                      '+${widget.earnedXp}',
+                      Icons.bolt_rounded,
+                      const Color(0xFFFFD700),
+                    ),
             ),
           ],
         ),

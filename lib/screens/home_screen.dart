@@ -1,19 +1,17 @@
-import 'dart:math';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lingua_franca/screens/developers_screen.dart';
-import 'package:lingua_franca/screens/profile_screen.dart';
-import 'package:lingua_franca/screens/timed_presentation_screen.dart';
-import '../models/scenario.dart';
 import '../models/assessment_question.dart';
 import '../services/gamification_service.dart';
 import '../services/grammar_api_service.dart';
 import '../services/fluency_api_service.dart';
-import 'scenario_chat_screen.dart';
-import 'accent_test_screen.dart';
+import '../theme/app_colors.dart';
 import 'assessment_screen.dart';
 import 'badges_screen.dart';
+import 'practice_hub_screen.dart';
 
 class _CircularProgressPainter extends CustomPainter {
   final double progress;
@@ -24,6 +22,7 @@ class _CircularProgressPainter extends CustomPainter {
 
   _CircularProgressPainter({
     required this.progress,
+
     required this.primaryColor,
     required this.trackColor,
     required this.strokeWidth,
@@ -85,7 +84,7 @@ class GradientCircularProgress extends StatelessWidget {
   Widget build(BuildContext context) {
     final gradientColors = [
       primaryColor,
-      const Color(0xFFD9BFFF),
+      AppColors.primaryLight,
     ];
 
     return CustomPaint(
@@ -241,7 +240,7 @@ class _SwingingRobotState extends State<SwingingRobot> with TickerProviderStateM
           painter: RobotPainter(
             swingAngle: _swingAnimation.value,
             blinkValue: _blinkController.value,
-            primaryColor: const Color(0xFF8A48F0),
+            primaryColor: AppColors.primary,
           ),
         );
       },
@@ -270,16 +269,52 @@ class _HomeScreenState extends State<HomeScreen> {
   // greeting + systemPrompt when this is null.
   String? _username;
 
+  // Live listener on users/{uid}. Replaces the old pattern of re-fetching
+  // stats on every Navigator.pop — with IndexedStack tabs nothing pops,
+  // so we need Firestore to push updates when another surface (session
+  // completion, level-up assessment, profile edit) writes to the doc.
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
+
   @override
   void initState() {
     super.initState();
     _loadUserStats();
     _loadUsername();
+    _listenToUserDoc();
     // Warm up the Cloud Run APIs in the background.
     // This wakes up the servers before the user actually starts a session.
     GrammarApiService.analyzeText('warmup').catchError((_) {});
     // Fluency API can also be warmed up by sending a small/invalid request
     FluencyApiService.analyzeAudio('/tmp/dummy.wav').catchError((_) => <String, dynamic>{});
+  }
+
+  @override
+  void dispose() {
+    _userDocSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenToUserDoc() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    _userDocSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((doc) async {
+      if (!mounted) return;
+      final data = doc.data();
+      if (data == null) return;
+      // Re-evaluate level-up readiness whenever the doc changes — the new
+      // totalXp may have crossed the next threshold.
+      final readiness = await _gamificationService.attemptLevelUp();
+      if (!mounted) return;
+      setState(() {
+        _userStats = data;
+        _levelUpReadiness = readiness;
+        _isLoading = false;
+      });
+    });
   }
 
   Future<void> _loadUserStats() async {
@@ -326,22 +361,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Appends a name-aware block to a scenario's system prompt when we know the
-  // user's name. The AI is told it *may* use the name naturally but should not
-  // force it — leaves the roleplay integrity of scripted scenarios intact.
-  String _withUserContext(String systemPrompt) {
-    final name = _username;
-    if (name == null || name.isEmpty) return systemPrompt;
-    return '$systemPrompt\n\n'
-        'You are talking with $name. Use their name naturally when it fits the '
-        'scene, but do not force it or overuse it.';
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: Color(0xFF8A48F0))),
+        body: Center(child: CircularProgressIndicator(color: AppColors.primary)),
       );
     }
 
@@ -351,14 +375,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final List<String> badges = List<String>.from(_userStats['badges'] ?? []);
 
     // Brand Colors
-    final Color primaryPurple = const Color(0xFF8A48F0);
-    final Color softBackground = const Color(0xFFF7F7FA);
-    final Color textDark = const Color(0xFF101828);
-    final Color textGrey = const Color(0xFF667085);
+    const Color primaryPurple = AppColors.primary;
+    const Color softBackground = AppColors.background;
+    const Color textDark = AppColors.textPrimary;
+    const Color textGrey = AppColors.textSecondary;
 
     return Scaffold(
       backgroundColor: softBackground,
-      bottomNavigationBar: _buildBottomNavBar(context, primaryPurple),
       body: RefreshIndicator(
         onRefresh: _loadUserStats,
         color: primaryPurple,
@@ -378,38 +401,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   // Progress Card (Dynamic)
                   _buildProgressCard(primaryPurple, textDark, textGrey, totalXp, level),
 
-                  if (_levelUpReadiness != null) ...[
-                    const SizedBox(height: 16),
-                    _buildLevelUpBanner(primaryPurple, _levelUpReadiness!),
-                  ],
-
                   const SizedBox(height: 24),
 
-                  // MAIN ACTION - This is the only "Active" looking button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: () => _showPracticeModeSelection(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryPurple,
-                        foregroundColor: Colors.white,
-                        elevation: 8,
-                        shadowColor: primaryPurple.withOpacity(0.5),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: const Text(
-                        'Start Conversation',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ),
+                  // MAIN ACTION - hero CTA to the practice hub
+                  _buildStartConversationCta(primaryPurple),
 
                   const SizedBox(height: 32),
 
@@ -440,7 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: const Text(
                           "View All",
                           style: TextStyle(
-                            color: Color(0xFF8A48F0),
+                            color: AppColors.primary,
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
@@ -462,6 +457,98 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // --- WIDGET COMPONENTS ---
+
+  Widget _buildStartConversationCta(Color primary) {
+    const lighter = AppColors.primaryGradientEnd;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const PracticeHubScreen()),
+          );
+          _loadUserStats();
+        },
+        child: Container(
+          height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [primary, lighter],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: primary.withOpacity(0.35),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.mic_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Start Conversation',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      "Pick a mode",
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildHeader(BuildContext context, Color primary, Color textDark, int streak, int xp) {
     return Row(
@@ -489,7 +576,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Row(
                 children: [
                   // 🔥 RESTORED COLOR: Red/Orange for Fire
-                  const Icon(Icons.local_fire_department_rounded, color: Color(0xFFFF512F), size: 18),
+                  const Icon(Icons.local_fire_department_rounded, color: AppColors.streak, size: 18),
                   const SizedBox(width: 4),
                   Text('$streak', style: TextStyle(fontWeight: FontWeight.bold, color: textDark, fontSize: 12)),
                 ],
@@ -582,7 +669,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // Removed border to let gradient shine
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF8A48F0).withOpacity(0.08), // Colored shadow
+            color: AppColors.primary.withOpacity(0.08), // Colored shadow
             blurRadius: 15,
             offset: const Offset(0, 4),
           ),
@@ -606,7 +693,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 6),
                 Text(
                   currentTip,
-                  style: const TextStyle(color: Color(0xFF667085), fontSize: 13, height: 1.3),
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.3),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -654,70 +741,57 @@ class _HomeScreenState extends State<HomeScreen> {
     return level[0].toUpperCase() + level.substring(1);
   }
 
-  Widget _buildLevelUpBanner(Color primary, LevelUpReadiness readiness) {
+  // Inline level-up CTA rendered inside the Progress Card when the user's
+  // XP has crossed the next threshold. Replaces the old standalone gradient
+  // banner — sits under the progress bar so the "bar is full → take the test"
+  // narrative reads as one continuous flow instead of a second hero element.
+  Widget _buildLevelUpActionRow(Color primary) {
+    final readiness = _levelUpReadiness!;
     final next = _displayLevel(readiness.nextLevel);
     final targetEnum = AssessmentLevelX.fromWire(readiness.nextLevel);
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: () async {
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => AssessmentScreen(
-              mode: AssessmentMode.levelUp,
-              targetLevel: targetEnum,
-            ),
-          ),
-        );
-        // Refresh when the user returns — pass or fail has updated the doc.
-        if (mounted) _loadUserStats();
-      },
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [primary, primary.withValues(alpha: 0.75)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: primary.withValues(alpha: 0.3),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.emoji_events, color: Colors.white, size: 36),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Divider(height: 1, color: Color(0xFFEAECF0)),
+          const SizedBox(height: 8),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AssessmentScreen(
+                    mode: AssessmentMode.levelUp,
+                    targetLevel: targetEnum,
+                  ),
+                ),
+              );
+              // Refresh when the user returns — pass or fail has updated the doc.
+              if (mounted) _loadUserStats();
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Row(
                 children: [
-                  Text(
-                    "You're ready to level up!",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
+                  Icon(Icons.emoji_events_rounded, color: primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Ready for $next — take your level-up assessment',
+                      style: TextStyle(
+                        color: primary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Take the test to reach $next.',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      fontSize: 13,
-                    ),
-                  ),
+                  Icon(Icons.arrow_forward_ios_rounded, color: primary, size: 14),
                 ],
               ),
             ),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 18),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -831,6 +905,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
+              if (_levelUpReadiness != null) _buildLevelUpActionRow(primary),
             ],
           ),
     );
@@ -910,7 +985,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: isActive ? const Color(0xFF8A48F0) : Colors.grey.shade400,
+                  color: isActive ? AppColors.primary : Colors.grey.shade400,
                 ),
               ),
               const SizedBox(height: 10),
@@ -918,15 +993,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: isActive ? const Color(0xFF8A48F0).withOpacity(0.1) : Colors.grey.shade50,
+                  color: isActive ? AppColors.primary.withOpacity(0.1) : Colors.grey.shade50,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: isActive ? const Color(0xFF8A48F0) : Colors.grey.shade200,
+                    color: isActive ? AppColors.primary : Colors.grey.shade200,
                     width: 2,
                   ),
                 ),
                 child: isActive
-                  ? const Icon(Icons.check_rounded, color: Color(0xFF8A48F0), size: 20)
+                  ? const Icon(Icons.check_rounded, color: AppColors.primary, size: 20)
                   : null,
               ),
             ],
@@ -972,7 +1047,7 @@ class _HomeScreenState extends State<HomeScreen> {
             shape: BoxShape.circle,
             border: isUnlocked ? Border.all(color: const Color(0xFFFFD700), width: 2) : null,
           ),
-          child: Icon(icon, color: isUnlocked ? const Color(0xFFD4AF37) : Colors.grey.shade400, size: 28),
+          child: Icon(icon, color: isUnlocked ? AppColors.gold : Colors.grey.shade400, size: 28),
         ),
         const SizedBox(height: 8),
         SizedBox(
@@ -983,7 +1058,7 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              color: isUnlocked ? const Color(0xFF101828) : Colors.grey.shade400,
+              color: isUnlocked ? AppColors.textPrimary : Colors.grey.shade400,
             ),
           ),
         ),
@@ -991,410 +1066,4 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- PRACTICE MODE SELECTION BOTTOM SHEET ---
-  void _showPracticeModeSelection(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              "Select Practice Mode",
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF101828),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              "Choose a high-level practice mode to get started.",
-              style: TextStyle(fontSize: 14, color: Color(0xFF667085)),
-            ),
-            const SizedBox(height: 24),
-            
-            // 1. Timed Presentation
-            _buildScenarioOption(
-              context: context,
-              icon: Icons.timer_outlined,
-              title: "Timed Presentation",
-              subtitle: "Speak freely on any topic with a timer",
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (context) => const TimedPresentationScreen()),
-                );
-              },
-            ),
-            
-            const SizedBox(height: 12),
-            
-            // 2. Scenario Based Dialogs
-            _buildScenarioOption(
-              context: context,
-              icon: Icons.chat_bubble_outline,
-              title: "Scenario Based Dialogs",
-              subtitle: "Practice specific real-world situations",
-              onTap: () {
-                Navigator.pop(context); // Close the first sheet
-                _showSpecificScenarios(context); // Open the scenarios sheet
-              },
-            ),
-
-            const SizedBox(height: 12),
-            
-            // 3. Freestyle Conversation
-            _buildScenarioOption(
-              context: context,
-              icon: Icons.forum_outlined,
-              title: "Freestyle Conversation",
-              subtitle: "Open-ended chat with AI",
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => ScenarioChatScreen(
-                      scenario: _buildFreestyleScenario(),
-                    ),
-                  ),
-                );
-              },
-            ),
-            
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- SPECIFIC SCENARIOS BOTTOM SHEET ---
-  void _showSpecificScenarios(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Color(0xFF101828)),
-                  onPressed: () {
-                    Navigator.pop(context); // Close scenarios sheet
-                    _showPracticeModeSelection(context); // Reopen mode sheet
-                  },
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  "Scenarios",
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF101828),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            const Padding(
-              padding: EdgeInsets.only(left: 12.0),
-              child: Text(
-                "Select a specific situation to practice.",
-                style: TextStyle(fontSize: 14, color: Color(0xFF667085)),
-              ),
-            ),
-            const SizedBox(height: 24),
-            
-            // 1. Ordering Fast Food (MVP)
-            _buildScenarioOption(
-              context: context,
-              icon: Icons.fastfood_outlined,
-              title: "Ordering Fast Food",
-              subtitle: "Practice ordering food at a drive-thru",
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (context) => ScenarioChatScreen(
-                    scenario: Scenario(
-                      id: "fast_food_1",
-                      title: "Ordering Fast Food",
-                      systemPrompt: _withUserContext(
-                        "You are a friendly but busy cashier at a popular fast food burger restaurant. Keep your responses extremely short and conversational. You MUST respond with only 1 short sentence per turn (maximum 10 words). Ask the customer for their order, clarify details if needed, and give them a total. Start by welcoming them in one short sentence. When the order is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your message.",
-                      ),
-                      initialGreeting: "Hi there! Welcome to Burger Haven. What can I get for you today?",
-                    ),
-                  )),
-                );
-              },
-            ),
-
-            const SizedBox(height: 12),
-            
-            // 2. Job Interview
-            _buildScenarioOption(
-              context: context,
-              icon: Icons.work_outline,
-              title: "Job Interview",
-              subtitle: "Professional mock interview practice",
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (context) => ScenarioChatScreen(
-                    scenario: Scenario(
-                      id: "job_interview_1",
-                      title: "Job Interview",
-                      systemPrompt: _withUserContext(
-                        "You are a senior HR manager at a reputable tech company conducting a real job interview for a junior Software Engineer role. Ask realistic behavioural and technical questions one at a time (e.g. 'Tell me about a challenging project', 'How do you handle deadlines?', 'Describe a conflict with a teammate'). Keep each response/question to 1 sentence (under 12 words). React naturally to the candidate's answers — ask a brief follow-up if their answer is vague. After 8-10 exchanges, thank them professionally, tell them the team will be in touch, then output the exact phrase [END_CONVERSATION] at the very end.",
-                      ),
-                      initialGreeting: "Hello! Please take a seat. Tell me about your technical background.",
-                    ),
-                  )),
-                );
-              },
-            ),
-
-            const SizedBox(height: 12),
-
-            // 3. Travel & Hotel
-            _buildScenarioOption(
-              context: context,
-              icon: Icons.flight_takeoff_outlined,
-              title: "Travel & Hotel",
-              subtitle: "Practice checking in and navigating travel",
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (context) => ScenarioChatScreen(
-                    scenario: Scenario(
-                      id: "travel_hotel_1",
-                      title: "Travel & Hotel",
-                      systemPrompt: _withUserContext(
-                        "You are a polite hotel front-desk receptionist at a mid-range hotel. Keep every response to 1 short sentence (under 12 words). Ask one question at a time. Help the guest check in: ask for their name, confirm reservation, explain breakfast hours, and hand over the key card. After check-in is complete and there is nothing more to say, output the exact phrase [END_CONVERSATION] at the end of your final message.",
-                      ),
-                      initialGreeting: "Good evening! Welcome to Grand Stay Hotel. How may I help you?",
-                    ),
-                  )),
-                );
-              },
-            ),
-            
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Scenario _buildFreestyleScenario() {
-    final name = _username;
-    // Each opener has a {n} slot. We substitute " $name" if we have one,
-    // or an empty string when we don't — so "Hey{n}!" becomes either
-    // "Hey Romaisa!" or just "Hey!" without any awkward spacing.
-    const openers = [
-      "Hey{n}! How's your day going?",
-      "Hi{n}! What have you been up to?",
-      "Hey there{n}! Anything on your mind today?",
-      "Hi{n}! How's everything?",
-      "Hey{n}! What's been good lately?",
-    ];
-    final insertion = (name != null && name.isNotEmpty) ? " $name" : "";
-    final opener = openers[Random().nextInt(openers.length)]
-        .replaceFirst('{n}', insertion);
-
-    return Scenario(
-      id: 'freestyle_1',
-      title: 'Freestyle Chat',
-      systemPrompt: _withUserContext(
-        "You are a warm, curious friend having a casual English conversation with the user. "
-        "This is free-form small talk — their day, their life, their interests, whatever comes up. "
-        "You are NOT a teacher and you do NOT correct them. Instead, silently model good English "
-        "by naturally rephrasing their ideas with better grammar and phrasing in your own replies. "
-        "Never say things like \"you should say X\" or \"the correct word is Y\".\n\n"
-        "Style rules:\n"
-        "- Keep replies short and natural: 1-2 sentences, usually under 20 words.\n"
-        "- Ask a genuine follow-up question most turns to keep the chat flowing.\n"
-        "- Match the user's energy. If they give a short answer, don't lecture.\n"
-        "- If they go quiet or give very short replies, gently offer a new thread (\"By the way, how's your weekend looking?\").\n"
-        "- Stay in English. No emojis, no asterisks, no stage directions.\n\n"
-        "Ending rule:\n"
-        "- After roughly 15-20 user turns, or if the conversation naturally winds down, warmly wrap up in 1 sentence and end your final message with the exact token [END_CONVERSATION].\n"
-        "- If the user clearly wants to stop (\"bye\", \"I have to go\", \"that's it for today\"), wrap up and emit [END_CONVERSATION] immediately.",
-      ),
-      initialGreeting: opener,
-    );
-  }
-
-  Widget _buildScenarioOption({
-    required BuildContext context,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    bool isLocked = false,
-    bool isNew = false,
-    VoidCallback? onTap,
-  }) {
-    final Color primaryPurple = const Color(0xFF8A48F0);
-    
-    return InkWell(
-      onTap: isLocked ? null : onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isLocked ? Colors.grey.shade50 : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isLocked ? Colors.grey.shade200 : Colors.grey.shade300),
-          boxShadow: isLocked ? [] : [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isLocked ? Colors.grey.shade200 : primaryPurple.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                icon,
-                color: isLocked ? Colors.grey.shade400 : primaryPurple,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: isLocked ? Colors.grey.shade500 : const Color(0xFF101828),
-                        ),
-                      ),
-                      if (isNew) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            "NEW",
-                            style: TextStyle(
-                              color: Colors.green.shade700,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: isLocked ? Colors.grey.shade400 : const Color(0xFF667085),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isLocked)
-              Icon(Icons.lock_outline, color: Colors.grey.shade400, size: 20)
-            else
-              Icon(Icons.arrow_forward_ios, color: Colors.grey.shade400, size: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- BOTTOM NAV BAR ---
-  Widget _buildBottomNavBar(BuildContext context, Color primary) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Colors.grey.shade200)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: BottomNavigationBar(
-        elevation: 0,
-        backgroundColor: Colors.white,
-        selectedItemColor: primary,
-        unselectedItemColor: Colors.grey.shade400,
-        type: BottomNavigationBarType.fixed,
-        showUnselectedLabels: true,
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-        unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-        onTap: (index) async {
-          if (index == 1) {
-            await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => ProfileScreen(initialData: _userStats),
-              ),
-            );
-            // Refresh home stats after returning — username/photo may have changed.
-            _loadUserStats();
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
-        ],
-      ),
-    );
-  }
 }

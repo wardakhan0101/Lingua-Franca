@@ -1,9 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../services/analysis_storage_service.dart';
+import '../services/grammar_api_service.dart';
+import '../theme/app_colors.dart';
+import '../widgets/stat_card.dart';
+import 'login_screen.dart';
+import 'unified_report_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
@@ -17,17 +24,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Palette
-  static const Color primaryPurple = Color(0xFF8A48F0);
-  static const Color softBackground = Color(0xFFF7F7FA);
-  static const Color textDark = Color(0xFF101828);
-  static const Color textGrey = Color(0xFF667085);
-  static const Color fireRed = Color(0xFFFF0000);
-  static const Color xpYellow = Color(0xFFFF9900);
+  // Palette — local aliases for AppColors to keep the rest of the file terse.
+  static const Color primaryPurple = AppColors.primary;
+  static const Color softBackground = AppColors.background;
+  static const Color textDark = AppColors.textPrimary;
+  static const Color textGrey = AppColors.textSecondary;
+  static const Color fireRed = AppColors.streak;
+  static const Color xpYellow = AppColors.xp;
 
   bool _isLoading = true;
   bool _isUpdatingPhoto = false;
   Map<String, dynamic> _data = {};
+
+  // Joined view of the three most recent analysis docs. Null = user has not
+  // yet completed a session (or the fetch failed silently).
+  LatestSessionBundle? _latestSession;
+  bool _isOpeningReport = false;
+  final AnalysisStorageService _analysisStorage = AnalysisStorageService();
+  // Profile lives inside the RootScaffold IndexedStack, so initState only
+  // fires once. Without a subscription the Latest Session card would
+  // never update after the user's first visit to this tab. We piggyback
+  // on writes to the user doc (gamification bumps totalSessions / totalXp
+  // at session end) as a cheap signal to refetch the latest session bundle.
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
 
   @override
   void initState() {
@@ -41,6 +60,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } else {
       _loadProfile();
     }
+    _loadLatestSession();
+    _listenToUserDoc();
+  }
+
+  @override
+  void dispose() {
+    _userDocSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadLatestSession() async {
+    final bundle = await _analysisStorage.fetchLatestSession();
+    if (!mounted) return;
+    setState(() => _latestSession = bundle);
+  }
+
+  void _listenToUserDoc() {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    _userDocSub = _firestore
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((doc) {
+      if (!mounted) return;
+      final fresh = doc.data();
+      if (fresh != null) {
+        setState(() => _data = fresh);
+      }
+      // Fire-and-forget: any user-doc change (including new-session XP /
+      // badge writes) triggers a re-fetch of the latest analyses bundle.
+      _loadLatestSession();
+    });
   }
 
   Future<void> _loadProfile() async {
@@ -78,7 +130,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _signOut() async {
     try {
       await _auth.signOut();
-      if (mounted) Navigator.of(context).pop();
+      if (!mounted) return;
+      // login_screen's pushReplacement replaced AuthWrapper with RootScaffold
+      // in the navigator stack, so AuthWrapper is no longer listening to the
+      // auth stream. Navigate back to LoginScreen explicitly and clear the
+      // stack — matches the imperative pattern used after sign-in/assessment.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -278,7 +338,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: _loadProfile,
+        onRefresh: () async {
+          await Future.wait([_loadProfile(), _loadLatestSession()]);
+        },
         color: primaryPurple,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -294,6 +356,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 16),
               _buildSecondaryStats(longestStreak, totalSessions, badges.length),
               const SizedBox(height: 16),
+              if (_latestSession != null) ...[
+                _buildLatestSessionCard(_latestSession!),
+                const SizedBox(height: 16),
+              ],
               _buildMemberSinceCard(memberSince),
               const SizedBox(height: 32),
               _buildLogoutButton(),
@@ -422,20 +488,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildStatsRow(int streak, int xp) {
     return Row(
       children: [
-        _buildStatCard(
-          'Streak',
-          '$streak',
-          'Days',
-          Icons.local_fire_department,
-          fireRed,
+        Expanded(
+          child: StatCard(
+            big: true,
+            label: 'Streak',
+            value: '$streak',
+            unit: 'Days',
+            icon: Icons.local_fire_department,
+            iconColor: fireRed,
+          ),
         ),
         const SizedBox(width: 16),
-        _buildStatCard(
-          'XP',
-          '$xp',
-          'Pts',
-          Icons.flash_on,
-          xpYellow,
+        Expanded(
+          child: StatCard(
+            big: true,
+            label: 'XP',
+            value: '$xp',
+            unit: 'Pts',
+            icon: Icons.flash_on,
+            iconColor: xpYellow,
+          ),
         ),
       ],
     );
@@ -444,28 +516,231 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildSecondaryStats(int longestStreak, int totalSessions, int badgeCount) {
     return Row(
       children: [
-        _buildSmallStatCard(
-          'Longest Streak',
-          '$longestStreak',
-          Icons.trending_up_rounded,
-          const Color(0xFF12B76A),
+        Expanded(
+          child: StatCard(
+            label: 'Longest Streak',
+            value: '$longestStreak',
+            icon: Icons.trending_up_rounded,
+            iconColor: AppColors.success,
+          ),
         ),
         const SizedBox(width: 12),
-        _buildSmallStatCard(
-          'Sessions',
-          '$totalSessions',
-          Icons.mic_rounded,
-          const Color(0xFF2E90FA),
+        Expanded(
+          child: StatCard(
+            label: 'Sessions',
+            value: '$totalSessions',
+            icon: Icons.mic_rounded,
+            iconColor: const Color(0xFF2E90FA),
+          ),
         ),
         const SizedBox(width: 12),
-        _buildSmallStatCard(
-          'Badges',
-          '$badgeCount',
-          Icons.military_tech_rounded,
-          const Color(0xFFD4AF37),
+        Expanded(
+          child: StatCard(
+            label: 'Badges',
+            value: '$badgeCount',
+            icon: Icons.military_tech_rounded,
+            iconColor: AppColors.gold,
+          ),
         ),
       ],
     );
+  }
+
+  Widget _buildLatestSessionCard(LatestSessionBundle bundle) {
+    final grammar = bundle.grammarScore?.round();
+    final fluency = bundle.fluencyScore;
+    final pronunciation = bundle.pronunciationScore;
+    final canOpenReport = bundle.grammarPayload != null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Latest Session',
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              Text(
+                _formatRelativeDate(bundle.timestamp),
+                style: TextStyle(
+                  color: Colors.grey.shade500,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: _buildScorePill('Grammar', grammar)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildScorePill('Fluency', fluency)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildScorePill('Pronunciation', pronunciation)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (canOpenReport)
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: _isOpeningReport ? null : () => _openLatestReport(bundle),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  backgroundColor: primaryPurple.withOpacity(0.08),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: _isOpeningReport
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: primaryPurple,
+                        ),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'View full report',
+                            style: TextStyle(
+                              color: primaryPurple,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          SizedBox(width: 6),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 16,
+                            color: primaryPurple,
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScorePill(String label, int? score) {
+    final display = score == null ? '—' : '$score';
+    final color = _scoreColor(score);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.15)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            display,
+            style: TextStyle(
+              color: color,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _scoreColor(int? score) {
+    if (score == null) return Colors.grey.shade400;
+    if (score >= 85) return const Color(0xFF22C55E); // green
+    if (score >= 50) return const Color(0xFFF59E0B); // amber
+    return const Color(0xFFEF4444); // red
+  }
+
+  String _formatRelativeDate(DateTime? date) {
+    if (date == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}';
+  }
+
+  Future<void> _openLatestReport(LatestSessionBundle bundle) async {
+    if (_isOpeningReport || bundle.grammarPayload == null) return;
+    setState(() => _isOpeningReport = true);
+    try {
+      // Rebuild the objects UnifiedReportScreen expects. The stored
+      // grammarPayload uses the same snake_case shape as the API, so fromJson
+      // round-trips cleanly.
+      final grammarResult = GrammarAnalysisResult.fromJson(bundle.grammarPayload!);
+      final fluencyResult = bundle.fluencyResult ?? const <String, dynamic>{};
+      final pronunciationResult = bundle.pronunciationResult;
+
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => UnifiedReportScreen(
+            grammarResult: grammarResult,
+            fluencyResult: fluencyResult,
+            pronunciationResult: pronunciationResult,
+            audioPath: bundle.audioPath,
+            earnedXp: 0,
+            isHistorical: true,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Failed to open historical report: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't open that report — data may be incomplete.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isOpeningReport = false);
+    }
   }
 
   Widget _buildMemberSinceCard(String memberSince) {
@@ -529,7 +804,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         onPressed: _signOut,
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16),
-          backgroundColor: const Color(0xFFFEE4E2),
+          backgroundColor: AppColors.dangerSoft,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -537,12 +812,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.logout, color: Color(0xFFD92D20)),
+            Icon(Icons.logout, color: AppColors.danger),
             SizedBox(width: 8),
             Text(
               'Log Out',
               style: TextStyle(
-                color: Color(0xFFD92D20),
+                color: AppColors.danger,
                 fontWeight: FontWeight.w700,
                 fontSize: 16,
               ),
@@ -553,111 +828,4 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildStatCard(
-      String label, String value, String unit, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey.shade100),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.03),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 24),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            RichText(
-              text: TextSpan(
-                children: [
-                  TextSpan(
-                    text: value,
-                    style: const TextStyle(
-                      color: textDark,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const TextSpan(text: ' '),
-                  TextSpan(
-                    text: unit,
-                    style: TextStyle(
-                      color: Colors.grey.shade500,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSmallStatCard(String label, String value, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.shade100),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.03),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(
-                color: textDark,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

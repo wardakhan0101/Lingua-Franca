@@ -88,6 +88,17 @@ class GrammarAnalysisResult {
       message: json['message'] ?? '',
     );
   }
+
+  // Round-trips through Firestore: keys match the API shape so the same
+  // fromJson factory can rebuild the object when we re-open a past report.
+  Map<String, dynamic> toJson() => {
+        'original_text': originalText,
+        'corrected_text': correctedText,
+        'message': message,
+        'mistakes': mistakes.map((m) => m.toJson()).toList(),
+        'summary': summary.toJson(),
+        'mistake_categories': mistakeCategories,
+      };
 }
 
 class GrammarMistake {
@@ -123,6 +134,17 @@ class GrammarMistake {
       severity: json['severity'] ?? 'medium',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'error_type': errorType,
+        'rule_id': ruleId,
+        'message': message,
+        'mistake_text': mistakeText,
+        'context': context,
+        'position': position,
+        'suggestions': suggestions,
+        'severity': severity,
+      };
 }
 
 class GrammarSummary {
@@ -154,6 +176,15 @@ class GrammarSummary {
       requiredTense: json['required_tense'],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'total_rule_based_mistakes': totalMistakes,
+        'word_count': wordCount,
+        'sentence_count': sentenceCount,
+        'grammar_score': grammarScore,
+        if (tenseCompliance != null) 'tense_compliance': tenseCompliance!.toJson(),
+        if (requiredTense != null) 'required_tense': requiredTense,
+      };
 }
 
 /// Returned inside GrammarSummary only when analyzeText() was called with a
@@ -180,4 +211,11 @@ class TenseCompliance {
       compliant: json['compliant'] ?? false,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'compliant_count': compliantCount,
+        'total_verbs': totalVerbs,
+        'percent': percent,
+        'compliant': compliant,
+      };
 }
