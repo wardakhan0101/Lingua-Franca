@@ -20,7 +20,7 @@ class TtsApiService {
         Uri.parse('$_baseUrl/synthesize'),
         headers: {'Content-Type': 'application/json'},
         body: '{"text": ${_escapeJson(text)}, "accent": "$accent"}',
-      ).timeout(const Duration(seconds: 300)); // increased to 120 seconds
+      ).timeout(const Duration(seconds: 15));
 
       print('[TTS] Response status: ${response.statusCode}');
       print('[TTS] Response size: ${response.bodyBytes.length} bytes');

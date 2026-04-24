@@ -7,10 +7,63 @@ class GamificationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Level Thresholds
-  static const int thresholdB2 = 2500;
-  static const int thresholdC1 = 7500;
-  static const int thresholdC2 = 15000;
+  // Level Thresholds — XP required to unlock the level-up assessment for
+  // each target level. Ladder: novice → beginner → intermediate → advanced → fluent.
+  static const int thresholdBeginner = 500;
+  static const int thresholdIntermediate = 2500;
+  static const int thresholdAdvanced = 7500;
+  static const int thresholdFluent = 15000;
+
+  // Ordered level ladder — index is level rank (0 = lowest).
+  static const List<String> levelLadder = [
+    'novice',
+    'beginner',
+    'intermediate',
+    'advanced',
+    'fluent',
+  ];
+
+  /// Maps a level key to the XP threshold you need to reach the NEXT level.
+  /// Returns null if already at the top.
+  static int? xpThresholdToReachNextFrom(String level) {
+    switch (level) {
+      case 'novice':
+        return thresholdBeginner;
+      case 'beginner':
+        return thresholdIntermediate;
+      case 'intermediate':
+        return thresholdAdvanced;
+      case 'advanced':
+        return thresholdFluent;
+      case 'fluent':
+      default:
+        return null;
+    }
+  }
+
+  /// Returns the next level up from [current], or null if already at fluent.
+  static String? nextLevelFrom(String current) {
+    final idx = levelLadder.indexOf(current);
+    if (idx < 0 || idx >= levelLadder.length - 1) return null;
+    return levelLadder[idx + 1];
+  }
+
+  /// Map legacy CEFR codes (B1/B2/C1/C2) to the new friendly labels.
+  /// Used during user-doc backfill.
+  static String _migrateLegacyLevel(String? legacy) {
+    switch (legacy) {
+      case 'B1':
+        return 'beginner';
+      case 'B2':
+        return 'intermediate';
+      case 'C1':
+        return 'advanced';
+      case 'C2':
+        return 'fluent';
+      default:
+        return legacy ?? 'novice';
+    }
+  }
 
   // Get current user stats
   Future<Map<String, dynamic>> getUserStats() async {
@@ -19,10 +72,12 @@ class GamificationService {
 
     final doc = await _firestore.collection('users').doc(userId).get();
     if (!doc.exists) {
-      // Initialize if not exists
+      // Initialize if not exists. New signups start at `novice` and have NOT
+      // completed the initial placement — AuthWrapper will route them to the
+      // assessment screen before Home.
       final initialData = {
         'totalXp': 0,
-        'currentLevel': 'B1',
+        'currentLevel': 'novice',
         'currentStreak': 0,
         'longestStreak': 0,
         'lastActiveDate': null,
@@ -36,6 +91,9 @@ class GamificationService {
         'firstSessionPronAvg': null,
         'pronunciationScores': <int>[],
         'phonemeStats': <String, dynamic>{},
+        // Assessment module.
+        'hasCompletedInitialAssessment': false,
+        'levelUpAttempts': <String, dynamic>{},
       };
       await _firestore.collection('users').doc(userId).set(initialData);
       // Re-read so the serverTimestamp resolves to a concrete value.
@@ -63,6 +121,23 @@ class GamificationService {
     }
     if (!data.containsKey('phonemeStats')) {
       backfill['phonemeStats'] = <String, dynamic>{};
+    }
+    // Migrate legacy CEFR level strings to the new friendly labels.
+    final currentLevel = data['currentLevel'] as String?;
+    if (currentLevel != null &&
+        (currentLevel == 'B1' ||
+            currentLevel == 'B2' ||
+            currentLevel == 'C1' ||
+            currentLevel == 'C2')) {
+      backfill['currentLevel'] = _migrateLegacyLevel(currentLevel);
+    }
+    // Grandfather existing users — they keep their level and skip the
+    // initial assessment.
+    if (!data.containsKey('hasCompletedInitialAssessment')) {
+      backfill['hasCompletedInitialAssessment'] = true;
+    }
+    if (!data.containsKey('levelUpAttempts')) {
+      backfill['levelUpAttempts'] = <String, dynamic>{};
     }
     if (backfill.isNotEmpty) {
       await _firestore.collection('users').doc(userId).set(backfill, SetOptions(merge: true));
@@ -129,9 +204,10 @@ class GamificationService {
         !currentBadges.contains('Persistent Learner')) {
       newBadges.add('Persistent Learner');
     }
-    final level = data['currentLevel'] as String? ?? 'B1';
-    if (level == 'B2' && !currentBadges.contains('B2 Master')) {
-      newBadges.add('B2 Master');
+    final level = _migrateLegacyLevel(data['currentLevel'] as String?);
+    if (level == 'intermediate' &&
+        !currentBadges.contains('Intermediate Master')) {
+      newBadges.add('Intermediate Master');
     }
 
     if (newBadges.isNotEmpty) {
@@ -412,49 +488,106 @@ class GamificationService {
   }
 
   // Level Up Gateway
-  Future<bool> attemptLevelUp() async {
+  /// Check whether the user has enough XP to attempt the level-up assessment
+  /// for their next level. Returns a [LevelUpReadiness] with the target level
+  /// and threshold, or null if the user is already at the top or below the
+  /// next threshold.
+  Future<LevelUpReadiness?> attemptLevelUp() async {
     final userId = _auth.currentUser?.uid;
-    if (userId == null) return false;
+    if (userId == null) return null;
 
     final data = await getUserStats();
-    int xp = data['totalXp'] ?? 0;
-    String level = data['currentLevel'] ?? 'B1';
-    
-    int threshold = 0;
-    String nextLevel = '';
-    if (level == 'B1') { threshold = thresholdB2; nextLevel = 'B2'; }
-    else if (level == 'B2') { threshold = thresholdC1; nextLevel = 'C1'; }
-    else if (level == 'C1') { threshold = thresholdC2; nextLevel = 'C2'; }
+    final int xp = (data['totalXp'] as int?) ?? 0;
+    final String level = _migrateLegacyLevel(data['currentLevel'] as String?);
 
-    if (xp < threshold) return false;
+    final String? nextLevel = nextLevelFrom(level);
+    final int? threshold = xpThresholdToReachNextFrom(level);
+    if (nextLevel == null || threshold == null) return null; // already fluent
+    if (xp < threshold) return null;
 
-    // Here we would normally trigger an assessment. 
-    // For now, let's assume this method is called after a pass/fail.
-    return true; 
+    return LevelUpReadiness(
+      currentLevel: level,
+      nextLevel: nextLevel,
+      threshold: threshold,
+      currentXp: xp,
+    );
   }
 
+  /// Apply the result of a level-up assessment. On pass the user is promoted
+  /// to the next level; on fail they lose 20% of the threshold XP. Also
+  /// increments the per-target-level retry counter.
   Future<void> handleAssessmentResult(bool passed) async {
     final userId = _auth.currentUser?.uid;
     if (userId == null) return;
 
     final data = await getUserStats();
-    String level = data['currentLevel'] ?? 'B1';
-    int xp = data['totalXp'] ?? 0;
+    final String level = _migrateLegacyLevel(data['currentLevel'] as String?);
+    final String? nextLevel = nextLevelFrom(level);
+    final int? threshold = xpThresholdToReachNextFrom(level);
+    if (nextLevel == null || threshold == null) return; // already fluent
+
+    final Map<String, dynamic> attempts = Map<String, dynamic>.from(
+      data['levelUpAttempts'] as Map? ?? const {},
+    );
+    attempts[nextLevel] = ((attempts[nextLevel] as num?)?.toInt() ?? 0) + 1;
 
     if (passed) {
-      String nextLevel = level == 'B1' ? 'B2' : (level == 'B2' ? 'C1' : 'C2');
       await _firestore.collection('users').doc(userId).update({
         'currentLevel': nextLevel,
-        // Optional: Keep XP or reset? User wants to "reach another assessment stage"
-        // Let's keep XP as a total.
+        'levelUpAttempts': attempts,
+        'lastAssessmentAt': FieldValue.serverTimestamp(),
       });
     } else {
-      // Failure Penalty: -20% of the threshold
-      int threshold = level == 'B1' ? thresholdB2 : (level == 'B2' ? thresholdC1 : thresholdC2);
-      int penalty = (threshold * 0.20).toInt();
+      final int penalty = (threshold * 0.20).toInt();
       await _firestore.collection('users').doc(userId).update({
         'totalXp': FieldValue.increment(-penalty),
+        'levelUpAttempts': attempts,
+        'lastAssessmentAt': FieldValue.serverTimestamp(),
       });
     }
   }
+
+  /// Apply the result of the one-time initial placement assessment. Writes
+  /// the placed level, per-skill scores, and flips
+  /// `hasCompletedInitialAssessment` so AuthWrapper stops routing to the
+  /// assessment screen on next launch.
+  Future<void> applyInitialPlacement({
+    required String placedLevel,
+    required int grammarScore,
+    required int fluencyScore,
+    required int pronunciationScore,
+    required int composite,
+  }) async {
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) return;
+
+    await _firestore.collection('users').doc(userId).set({
+      'currentLevel': placedLevel,
+      'hasCompletedInitialAssessment': true,
+      'lastAssessmentAt': FieldValue.serverTimestamp(),
+      'initialAssessmentScores': {
+        'grammar': grammarScore,
+        'fluency': fluencyScore,
+        'pronunciation': pronunciationScore,
+        'composite': composite,
+        'placedLevel': placedLevel,
+        'completedAt': FieldValue.serverTimestamp(),
+      },
+    }, SetOptions(merge: true));
+  }
+}
+
+/// Describes a user's readiness for a level-up assessment.
+class LevelUpReadiness {
+  final String currentLevel;
+  final String nextLevel;
+  final int threshold;
+  final int currentXp;
+
+  const LevelUpReadiness({
+    required this.currentLevel,
+    required this.nextLevel,
+    required this.threshold,
+    required this.currentXp,
+  });
 }

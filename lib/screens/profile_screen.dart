@@ -240,7 +240,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final int currentStreak = _data['currentStreak'] ?? 0;
     final int longestStreak = _data['longestStreak'] ?? 0;
     final int totalSessions = _data['totalSessions'] ?? 0;
-    final String level = _data['currentLevel'] ?? 'B1';
+    final String level = _data['currentLevel'] ?? 'novice';
     final List<String> badges = List<String>.from(_data['badges'] ?? const []);
     // Source of truth for signup date is Firebase Auth — it's stamped at account creation
     // and is accurate even for accounts that pre-date our Firestore 'joinedAt' field.
@@ -399,6 +399,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildLevelChip(String level) {
+    final display = level.isEmpty
+        ? level
+        : level[0].toUpperCase() + level.substring(1);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
@@ -406,7 +409,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        'Level $level',
+        'Level $display',
         style: const TextStyle(
           color: primaryPurple,
           fontWeight: FontWeight.w700,

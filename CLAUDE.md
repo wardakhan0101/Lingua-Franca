@@ -30,12 +30,14 @@ pytest tests/test_fluency.py::test_perfect_speech   # single test
 gcloud builds submit --config cloudbuild.yaml .   # cached rebuild
 ```
 
-### Backend: Accent_engine/ (Coqui XTTS v2, local only)
-Python **3.10 specifically** — newer versions break TTS deps. After `pip install -r requirements.txt`, you **must** run the downgrade block documented in `Accent_engine/README.md` (setuptools<70, transformers==4.36.0, torch<2.6, torchaudio<2.6 from the CPU index). Without these, the server crashes on first request. Run with:
+### Backend: Accent_engine/ (edge-tts wrapper, local only)
+Thin FastAPI service that forwards text to Microsoft's free Edge neural-voice endpoint via the `edge-tts` library. No API key, no account, no local model. Any Python 3.8+ works:
 ```bash
+python -m venv venv && source venv/bin/activate   # or Activate.ps1 on Windows
+pip install -r requirements.txt
 uvicorn tts_service:app --host 0.0.0.0 --port 8000
 ```
-The Flutter client hits `http://127.0.0.1:8000` — for a physical Android device use `adb reverse tcp:8000 tcp:8000`.
+The Flutter client hits `http://127.0.0.1:8000` — for a physical Android device use `adb reverse tcp:8000 tcp:8000`. Returns MP3 (`audio/mpeg`), which `MyAudioSource` in `lib/services/my_audio_source.dart` feeds into `just_audio`. Accent dropdown sends one of 6 keys (`american_female`/`male`, `british_female`/`male`, `pakistani_female`/`male`); the `VOICE_MAP` in `tts_service.py` also accepts bare `american`/`british`/`pakistani` as aliases for the female voices so the dev-only `accent_test_screen.dart` keeps working.
 
 ### Backend: grammar_checker/ (LanguageTool + T5 + spaCy)
 Deployed to Cloud Run at the URL hard-coded in `lib/services/grammar_api_service.dart`. The Dart client does **not** read this from `.env` — change it in code if redeploying to a new URL.

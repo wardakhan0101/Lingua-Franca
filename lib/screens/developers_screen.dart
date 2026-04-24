@@ -6,6 +6,7 @@ import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
 import 'package:lingua_franca/screens/native_stt_screen_test.dart';
 import 'package:lingua_franca/screens/accent_test_screen.dart';
+import 'package:lingua_franca/tools/assessment_seed.dart';
 
 import 'chat_screen_test.dart';
 
@@ -55,6 +56,38 @@ class DevelopersScreen extends StatelessWidget {
                       style: const TextStyle(color: Colors.white70),
                     ),
                   const SizedBox(height: 48),
+
+                  // Seed Firestore assessment_questions collection — one-time
+                  // setup. Remove this button once questions are uploaded.
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const AssessmentSeedScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber.shade700,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.upload, size: 24),
+                          SizedBox(width: 8),
+                          Text('Seed Assessment Questions'),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
 
                   // Start Conversation (Legacy Test)
                   SizedBox(

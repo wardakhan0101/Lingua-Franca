@@ -14,7 +14,7 @@ class MyAudioSource extends StreamAudioSource {
       contentLength: end - start,
       offset: start,
       stream: Stream.value(bytes.sublist(start, end)),
-      contentType: 'audio/wav',
+      contentType: 'audio/mpeg',
     );
   }
 }

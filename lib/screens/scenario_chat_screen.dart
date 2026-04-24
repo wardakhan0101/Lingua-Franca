@@ -65,7 +65,7 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
 
   // TTS variables
   final AudioPlayer _audioPlayer = AudioPlayer();
-  String _selectedAccent = 'american';
+  String _selectedAccent = 'american_female';
   bool _isTtsPlaying = false; // True while AI audio is playing — blocks mic to prevent audio session conflict
 
   // Background Analysis Variables
@@ -1010,34 +1010,64 @@ class _ScenarioChatScreenState extends State<ScenarioChatScreen>
                   ),
                   items: [
                     DropdownMenuItem(
-                      value: 'american', 
+                      value: 'american_female',
                       child: Row(
                         children: const [
                           Text("🇺🇸", style: TextStyle(fontSize: 16)),
                           SizedBox(width: 6),
-                          Text("US"),
+                          Text("US (F)"),
                         ],
-                      )
+                      ),
                     ),
                     DropdownMenuItem(
-                      value: 'british', 
+                      value: 'american_male',
+                      child: Row(
+                        children: const [
+                          Text("🇺🇸", style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text("US (M)"),
+                        ],
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: 'british_female',
                       child: Row(
                         children: const [
                           Text("🇬🇧", style: TextStyle(fontSize: 16)),
                           SizedBox(width: 6),
-                          Text("UK"),
+                          Text("UK (F)"),
                         ],
-                      )
+                      ),
                     ),
                     DropdownMenuItem(
-                      value: 'pakistani', 
+                      value: 'british_male',
+                      child: Row(
+                        children: const [
+                          Text("🇬🇧", style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text("UK (M)"),
+                        ],
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: 'pakistani_female',
                       child: Row(
                         children: const [
                           Text("🇵🇰", style: TextStyle(fontSize: 16)),
                           SizedBox(width: 6),
-                          Text("PK"),
+                          Text("PK (F)"),
                         ],
-                      )
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: 'pakistani_male',
+                      child: Row(
+                        children: const [
+                          Text("🇵🇰", style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text("PK (M)"),
+                        ],
+                      ),
                     ),
                   ],
                   onChanged: (String? newValue) {

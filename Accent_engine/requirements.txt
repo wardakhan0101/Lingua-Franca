@@ -1,6 +1,4 @@
 fastapi
 uvicorn[standard]
-TTS
+edge-tts
 pydantic
-python-multipart
-torch --index-url https://download.pytorch.org/whl/cpu

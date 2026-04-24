@@ -4,9 +4,9 @@ from pydantic import BaseModel
 import spacy
 import language_tool_python
 import json
-from typing import Dict, List
-import uvicorn
 import math
+from typing import Dict, List, Optional
+import uvicorn
 
 class SpokenEnglishGrammarChecker:
     def __init__(self):
@@ -26,13 +26,16 @@ class SpokenEnglishGrammarChecker:
         print("All models loaded successfully!\n")
     
     
-    def analyze_grammar(self, text: str, debug: bool = False) -> Dict:
+    def analyze_grammar(self, text: str, debug: bool = False, required_tense: Optional[str] = None) -> Dict:
         """
         New simplified logic:
         1. Rules (spaCy + LanguageTool + Custom) find and fix mistakes
         2. Model polishes the rule-corrected text
         3. Compare original vs final to determine if perfect
-        
+
+        If required_tense is supplied, also runs check_tense_compliance() and
+        includes a `tense_compliance` field inside the summary.
+
         Returns a detailed report with all mistakes found
         """
         # ========================================
@@ -106,9 +109,14 @@ class SpokenEnglishGrammarChecker:
         # ========================================
         # STEP 4: DETERMINE IF PERFECT
         # ========================================
-        
-        # Compare original with final output
-        is_perfect = text.strip() == final_corrected_text.strip()
+
+        # "Perfect" = rules (spaCy + LanguageTool + custom) found no mistakes.
+        # We deliberately IGNORE T5's cosmetic changes (capitalization,
+        # punctuation, etc.) — those are already filtered from the mistakes
+        # list, so it's misleading to flag has_errors just because T5
+        # capitalized "i" or added a period. This also ensures the gradient
+        # grammar_score fires whenever rules catch a real mistake.
+        is_perfect = (len(mistakes) == 0)
         has_errors = not is_perfect
         
         # Check if model made additional corrections beyond rules
@@ -120,54 +128,58 @@ class SpokenEnglishGrammarChecker:
         
         word_count = len([token for token in doc if not token.is_punct and not token.is_space])
         sentence_count = len(list(doc.sents))
-        
-        # Calculate a more dynamic grammar score using exponential decay
-        # Formula: Score = 100 * e^(-0.25 * (Mistakes / Sentences))
-        # Gentler penalty suitable for spoken English learners.
-        
+
+        # Gradient grammar score via exponential decay.
+        # 1 mistake/sentence density -> ~78%, 2 -> ~61%, 3 -> ~47%.
         if is_perfect or sentence_count == 0:
             grammar_score = 100
         else:
-            # Weighted mistakes based on severity (kept close to 1.0 to avoid over-penalizing)
-            weighted_mistakes = 0
+            weighted_mistakes = 0.0
             for m in mistakes:
                 sev = m.get('severity', 'medium').lower()
-                if sev == 'high': weighted_mistakes += 1.0
-                elif sev == 'medium': weighted_mistakes += 0.7
-                else: weighted_mistakes += 0.3
-            
-            # Error density: mistakes per sentence
+                if sev == 'high':
+                    weighted_mistakes += 1.0
+                elif sev == 'medium':
+                    weighted_mistakes += 0.7
+                else:
+                    weighted_mistakes += 0.3
             density = weighted_mistakes / sentence_count
-            
-            # Exponential decay (coefficient -0.25 gives gentler scoring)
-            # 1 mistake/sentence (~1.0 density) -> ~78%
-            # 2 mistakes/sentence (~2.0 density) -> ~61%
-            # 3 mistakes/sentence (~3.0 density) -> ~47%
             grammar_score = int(100 * math.exp(-0.25 * density))
             grammar_score = max(0, min(100, grammar_score))
+
+        # ========================================
+        # STEP 6: CREATE REPORT
+        # ========================================
+
+        summary = {
+            'total_rule_based_mistakes': len(mistakes),
+            'word_count': word_count,
+            'sentence_count': sentence_count,
+            'is_perfect': is_perfect,
+            'has_errors': has_errors,
+            'model_made_additional_corrections': model_made_changes,
+            'grammar_score': grammar_score
+        }
+
+        # Optional tense-compliance check (used by the assessment module).
+        if required_tense:
+            summary['tense_compliance'] = self.check_tense_compliance(doc, required_tense)
+            summary['required_tense'] = required_tense
 
         report = {
             'original_text': text,
             'corrected_text': final_corrected_text,
             'mistakes': mistakes,  # Only rule-based mistakes (detailed)
-            'summary': {
-                'total_rule_based_mistakes': len(mistakes),
-                'word_count': word_count,
-                'sentence_count': sentence_count,
-                'is_perfect': is_perfect,
-                'has_errors': has_errors,
-                'model_made_additional_corrections': model_made_changes,
-                'grammar_score': grammar_score
-            },
+            'summary': summary,
             'mistake_categories': self._categorize_mistakes(mistakes)
         }
-        
+
         # Add appropriate message based on analysis
         if is_perfect:
             report['message'] = "Perfect! Your grammar is 100% correct."
         else:
             report['message'] = f"Your grammar is {grammar_score}% correct."
-        
+
         return report
     
     def _check_custom_rules(self, doc, text: str) -> List[Dict]:
@@ -1207,7 +1219,101 @@ class SpokenEnglishGrammarChecker:
                 categories[category] = 0
             categories[category] += 1
         return categories
-    
+
+    def check_tense_compliance(self, doc, required_tense: str) -> Dict:
+        """
+        Check what fraction of the text's main verb events match the required tense.
+
+        Supported required_tense values:
+          - "past_simple"     (VBD main verbs, or did + VB)
+          - "past_perfect"    (had + VBN)
+          - "present_simple"  (VBP/VBZ main verbs, or do/does + VB)
+          - "present_perfect" (have/has + VBN)
+          - "future_simple"   (will + VB)
+
+        Returns {compliant_count, total_verbs, percent, compliant}.
+        compliant = percent >= 0.75 (at least 3 of 4 verb events match).
+        """
+        n = len(doc)
+        events = []  # list of tense labels, one per main-verb event
+
+        def _skip_negation(start: int):
+            j = start
+            while j < n and doc[j].text.lower() in ("n't", "not", "never"):
+                j += 1
+            return j if j < n else None
+
+        i = 0
+        while i < n:
+            token = doc[i]
+            tag = token.tag_
+            lemma = token.lemma_.lower()
+
+            # past_perfect: "had" + [neg] + VBN
+            if tag == "VBD" and lemma == "have":
+                j = _skip_negation(i + 1)
+                if j is not None and doc[j].tag_ == "VBN":
+                    events.append("past_perfect")
+                    i = j + 1
+                    continue
+
+            # present_perfect: "have/has" + [neg] + VBN
+            if tag in ("VBP", "VBZ") and lemma == "have":
+                j = _skip_negation(i + 1)
+                if j is not None and doc[j].tag_ == "VBN":
+                    events.append("present_perfect")
+                    i = j + 1
+                    continue
+
+            # future_simple: "will" + [neg] + VB
+            if tag == "MD" and lemma == "will":
+                j = _skip_negation(i + 1)
+                if j is not None and doc[j].tag_ == "VB":
+                    events.append("future_simple")
+                    i = j + 1
+                    continue
+
+            # past_simple (do-support): "did" + [neg] + VB
+            if tag == "VBD" and lemma == "do":
+                j = _skip_negation(i + 1)
+                if j is not None and doc[j].tag_ == "VB":
+                    events.append("past_simple")
+                    i = j + 1
+                    continue
+
+            # present_simple (do-support): "do/does" + [neg] + VB
+            if tag in ("VBP", "VBZ") and lemma == "do":
+                j = _skip_negation(i + 1)
+                if j is not None and doc[j].tag_ == "VB":
+                    events.append("present_simple")
+                    i = j + 1
+                    continue
+
+            # Bare past: any VBD main verb
+            if tag == "VBD":
+                events.append("past_simple")
+                i += 1
+                continue
+
+            # Bare present: any VBP or VBZ
+            if tag in ("VBP", "VBZ"):
+                events.append("present_simple")
+                i += 1
+                continue
+
+            i += 1
+
+        total_verbs = len(events)
+        compliant_count = sum(1 for e in events if e == required_tense)
+        percent = round(compliant_count / total_verbs, 3) if total_verbs > 0 else 0.0
+
+        return {
+            "compliant_count": compliant_count,
+            "total_verbs": total_verbs,
+            "percent": percent,
+            "compliant": percent >= 0.75,
+        }
+
     def generate_text_report(self, analysis: Dict) -> str:
         """
         Generate a human-readable text report
@@ -1294,6 +1400,7 @@ checker = SpokenEnglishGrammarChecker()
 class TextRequest(BaseModel):
     text: str
     debug: bool = False
+    required_tense: Optional[str] = None
 
 class GrammarResponse(BaseModel):
     original_text: str
@@ -1347,17 +1454,23 @@ async def health():
 @app.post("/analyze", response_model=GrammarResponse)
 async def analyze_text(request: TextRequest):
     """
-    Analyze text for grammar mistakes
+    Analyze text for grammar mistakes.
+
+    Optional `required_tense` triggers a tense-compliance check whose result
+    is returned inside `summary.tense_compliance`.
     """
     try:
         if not request.text or not request.text.strip():
             raise HTTPException(status_code=400, detail="Text cannot be empty")
-        
-        # Analyze the grammar
-        result = checker.analyze_grammar(request.text, debug=request.debug)
-        
+
+        result = checker.analyze_grammar(
+            request.text,
+            debug=request.debug,
+            required_tense=request.required_tense,
+        )
+
         return result
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
 

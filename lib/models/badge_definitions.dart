@@ -65,8 +65,8 @@ const List<BadgeModel> kAllBadges = [
     color: Colors.green,
   ),
   BadgeModel(
-    name: 'B2 Master',
-    description: 'Reach the B2 Upper Intermediate level.',
+    name: 'Intermediate Master',
+    description: 'Reach the Intermediate level.',
     icon: Icons.military_tech,
     color: Colors.deepOrange,
   ),

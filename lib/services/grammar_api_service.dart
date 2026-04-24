@@ -7,18 +7,32 @@ class GrammarApiService {
   static const String baseUrl =
       'https://grammar-checker-702584631438.us-central1.run.app';
 
-  /// Analyze text for grammar mistakes
-  static Future<GrammarAnalysisResult> analyzeText(String text) async {
+  /// Analyze text for grammar mistakes. Pass [requiredTense] (e.g.
+  /// 'past_simple', 'past_perfect', 'present_perfect', 'future_simple') to
+  /// additionally get a `tense_compliance` verdict in the response summary.
+  /// Used by the assessment module to grade tense-specific grammar questions.
+  static Future<GrammarAnalysisResult> analyzeText(
+    String text, {
+    String? requiredTense,
+  }) async {
     try {
       debugPrint('==== GRAMMAR API REQUEST ====');
       debugPrint('Payload text: "$text"');
+      if (requiredTense != null) {
+        debugPrint('Required tense: $requiredTense');
+      }
 
       final url = Uri.parse('$baseUrl/analyze');
+
+      final body = <String, dynamic>{'text': text};
+      if (requiredTense != null) {
+        body['required_tense'] = requiredTense;
+      }
 
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'text': text}),
+        body: jsonEncode(body),
       ).timeout(const Duration(seconds: 90), onTimeout: () {
         throw Exception('Grammar API timed out after 90 seconds (Cloud Run cold start?)');
       });
@@ -116,12 +130,16 @@ class GrammarSummary {
   final int wordCount;
   final int sentenceCount;
   final double grammarScore;
+  final TenseCompliance? tenseCompliance;
+  final String? requiredTense;
 
   GrammarSummary({
     required this.totalMistakes,
     required this.wordCount,
     required this.sentenceCount,
     required this.grammarScore,
+    this.tenseCompliance,
+    this.requiredTense,
   });
 
   factory GrammarSummary.fromJson(Map<String, dynamic> json) {
@@ -130,6 +148,36 @@ class GrammarSummary {
       wordCount: json['word_count'] ?? 0,
       sentenceCount: json['sentence_count'] ?? 0,
       grammarScore: (json['grammar_score'] ?? 0).toDouble(),
+      tenseCompliance: json['tense_compliance'] != null
+          ? TenseCompliance.fromJson(json['tense_compliance'])
+          : null,
+      requiredTense: json['required_tense'],
+    );
+  }
+}
+
+/// Returned inside GrammarSummary only when analyzeText() was called with a
+/// requiredTense. Captures how many of the user's verb events matched the
+/// requested tense.
+class TenseCompliance {
+  final int compliantCount;
+  final int totalVerbs;
+  final double percent; // 0.0 – 1.0
+  final bool compliant; // true when percent >= 0.75
+
+  TenseCompliance({
+    required this.compliantCount,
+    required this.totalVerbs,
+    required this.percent,
+    required this.compliant,
+  });
+
+  factory TenseCompliance.fromJson(Map<String, dynamic> json) {
+    return TenseCompliance(
+      compliantCount: json['compliant_count'] ?? 0,
+      totalVerbs: json['total_verbs'] ?? 0,
+      percent: (json['percent'] ?? 0).toDouble(),
+      compliant: json['compliant'] ?? false,
     );
   }
 }

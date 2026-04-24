@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lingua_franca/services/auth_service.dart';
 import 'package:lingua_franca/screens/login_screen.dart';
-import 'package:lingua_franca/screens/home_screen.dart';
+import 'package:lingua_franca/screens/assessment_screen.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -41,8 +41,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
         );
         
         if (mounted) {
+          // New users always take the initial placement assessment before
+          // reaching Home. AuthWrapper enforces the same check on re-login.
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
+            MaterialPageRoute(
+              builder: (context) =>
+                  const AssessmentScreen(mode: AssessmentMode.initial),
+            ),
           );
         }
       } catch (e) {

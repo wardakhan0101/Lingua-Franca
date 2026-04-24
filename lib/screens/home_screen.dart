@@ -6,11 +6,13 @@ import 'package:lingua_franca/screens/developers_screen.dart';
 import 'package:lingua_franca/screens/profile_screen.dart';
 import 'package:lingua_franca/screens/timed_presentation_screen.dart';
 import '../models/scenario.dart';
+import '../models/assessment_question.dart';
 import '../services/gamification_service.dart';
 import '../services/grammar_api_service.dart';
 import '../services/fluency_api_service.dart';
 import 'scenario_chat_screen.dart';
 import 'accent_test_screen.dart';
+import 'assessment_screen.dart';
 import 'badges_screen.dart';
 
 class _CircularProgressPainter extends CustomPainter {
@@ -259,6 +261,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic> _userStats = {};
   bool _isLoading = true;
 
+  // Non-null when the user's XP has crossed the next level's threshold and
+  // they're eligible to take the level-up assessment. Drives the CTA banner.
+  LevelUpReadiness? _levelUpReadiness;
+
   // Null when unknown (user hasn't set a username and has no displayName, or
   // Firestore hasn't responded yet). Scenarios fall back to their generic
   // greeting + systemPrompt when this is null.
@@ -279,9 +285,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadUserStats() async {
     try {
       final stats = await _gamificationService.getUserStats();
+      // Also check whether the user has crossed the next XP threshold —
+      // drives the level-up CTA banner.
+      final readiness = await _gamificationService.attemptLevelUp();
       if (mounted) {
         setState(() {
           _userStats = stats;
+          _levelUpReadiness = readiness;
           _isLoading = false;
         });
       }
@@ -337,7 +347,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final int totalXp = _userStats['totalXp'] ?? 0;
     final int streak = _userStats['currentStreak'] ?? 0;
-    final String level = _userStats['currentLevel'] ?? 'B1';
+    final String level = _userStats['currentLevel'] ?? 'novice';
     final List<String> badges = List<String>.from(_userStats['badges'] ?? []);
 
     // Brand Colors
@@ -367,6 +377,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   // Progress Card (Dynamic)
                   _buildProgressCard(primaryPurple, textDark, textGrey, totalXp, level),
+
+                  if (_levelUpReadiness != null) ...[
+                    const SizedBox(height: 16),
+                    _buildLevelUpBanner(primaryPurple, _levelUpReadiness!),
+                  ],
 
                   const SizedBox(height: 24),
 
@@ -611,7 +626,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   border: Border.all(color: Colors.white),
                 ),
                 child: Text(
-                  'Level $level',
+                  'Level ${_displayLevel(level)}',
                   style: TextStyle(
                     color: primary,
                     fontWeight: FontWeight.w700,
@@ -634,12 +649,87 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildProgressCard(Color primary, Color textDark, Color textGrey, int totalXp, String level) {
-    int threshold = 2500;
-    if (level == 'B2') threshold = 7500;
-    if (level == 'C1') threshold = 15000;
+  String _displayLevel(String level) {
+    if (level.isEmpty) return level;
+    return level[0].toUpperCase() + level.substring(1);
+  }
 
-    final double currentProgress = (totalXp / threshold).clamp(0.0, 1.0);
+  Widget _buildLevelUpBanner(Color primary, LevelUpReadiness readiness) {
+    final next = _displayLevel(readiness.nextLevel);
+    final targetEnum = AssessmentLevelX.fromWire(readiness.nextLevel);
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AssessmentScreen(
+              mode: AssessmentMode.levelUp,
+              targetLevel: targetEnum,
+            ),
+          ),
+        );
+        // Refresh when the user returns — pass or fail has updated the doc.
+        if (mounted) _loadUserStats();
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [primary, primary.withValues(alpha: 0.75)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: primary.withValues(alpha: 0.3),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.emoji_events, color: Colors.white, size: 36),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "You're ready to level up!",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Take the test to reach $next.',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgressCard(Color primary, Color textDark, Color textGrey, int totalXp, String level) {
+    // Threshold = XP needed to unlock the next level. Null at 'fluent'
+    // (already at max) → show a MAX progress state instead of a bar.
+    final int? threshold =
+        GamificationService.xpThresholdToReachNextFrom(level);
+    final double currentProgress = threshold == null
+        ? 1.0
+        : (totalXp / threshold).clamp(0.0, 1.0);
     final String currentProgressText = '${(currentProgress * 100).toInt()}%';
 
     return Container(
@@ -673,11 +763,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Level $level Progress',
+                    'Level ${_displayLevel(level)} Progress',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textGrey),
                   ),
                   Text(
-                    '$totalXp / $threshold XP',
+                    threshold == null ? 'MAX — $totalXp XP' : '$totalXp / $threshold XP',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: primary),
                   ),
                 ],
@@ -866,7 +956,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildBadge(Icons.timer_outlined, 'Iron Lung', badges.contains('Iron Lung')),
           _buildBadge(Icons.auto_awesome_rounded, 'Grammar Wizard', badges.contains('Grammar Wizard')),
           _buildBadge(Icons.local_fire_department_rounded, '7 Day Streak', badges.contains('Weekly Warrior')),
-          _buildBadge(Icons.emoji_events_rounded, 'B2 Master', badges.contains('B2 Master')),
+          _buildBadge(Icons.emoji_events_rounded, 'Intermediate', badges.contains('Intermediate Master')),
         ],
       ),
     );
