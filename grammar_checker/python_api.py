@@ -1023,7 +1023,333 @@ class SpokenEnglishGrammarChecker:
                                 'severity': 'medium'
                             })
                             break  # Only report once per sequence
-        
+
+        # ====================================================================================
+        # DEP-PARSE SUBJECT-VERB AGREEMENT
+        # Walks the dependency tree to find subject-verb pairs regardless of
+        # distance, so errors like:
+        #   "The boys is running"            (NNS subject + VBZ verb)
+        #   "The team of doctors have arrived"  (distant subject)
+        #   "They was late"                  (was/were mismatch)
+        #   "He are happy" / "I is fine"     (pronoun be-verb mismatch)
+        # get caught even though the existing adjacent-token rules don't fire.
+        # The duplicate-removal pass at the end of analyze_grammar() collapses
+        # any overlap with the existing rules.
+        # ====================================================================================
+
+        def _is_third_person_singular_subject(subj_token):
+            """True for he/she/it/singular noun, False for I/you/we/they/plural noun, None if unsure."""
+            text_low = subj_token.text.lower()
+            if text_low in ('he', 'she', 'it'):
+                return True
+            if text_low in ('i', 'you', 'we', 'they'):
+                return False
+            if subj_token.tag_ in ('NN', 'NNP'):
+                return True
+            if subj_token.tag_ in ('NNS', 'NNPS'):
+                return False
+            return None
+
+        # Pattern A: VBZ ('runs', 'is', 'has') with non-3rd-person-singular subject,
+        # or VBP ('run', 'are', 'have') with 3rd-person-singular subject.
+        # spaCy attaches `nsubj` to the MAIN verb of a clause, so for auxiliary
+        # verbs like "is running", "has finished", "have arrived", the subject
+        # is a SIBLING of the auxiliary (a child of its head), not a child of
+        # the auxiliary itself. We fall back to the head's nsubj when the aux
+        # has no direct subject child.
+        for token in doc:
+            if token.pos_ not in ('VERB', 'AUX'):
+                continue
+            if token.tag_ not in ('VBZ', 'VBP'):
+                continue
+            subj_candidates = [c for c in token.children if c.dep_ in ('nsubj', 'nsubjpass')]
+            if not subj_candidates and token.dep_ == 'aux':
+                subj_candidates = [c for c in token.head.children if c.dep_ in ('nsubj', 'nsubjpass')]
+            for child in subj_candidates:
+                is_3ps = _is_third_person_singular_subject(child)
+                if is_3ps is None:
+                    continue
+
+                wrong = False
+                suggestion_verb = token.text
+                if is_3ps and token.tag_ == 'VBP':
+                    # singular subj + plural-form verb → use VBZ form
+                    wrong = True
+                    base = token.lemma_.lower()
+                    if base == 'be':
+                        suggestion_verb = 'is'
+                    elif base == 'have':
+                        suggestion_verb = 'has'
+                    elif base == 'do':
+                        suggestion_verb = 'does'
+                    else:
+                        if base.endswith(('s', 'sh', 'ch', 'x', 'z', 'o')):
+                            suggestion_verb = base + 'es'
+                        elif base.endswith('y') and len(base) > 1 and base[-2] not in 'aeiou':
+                            suggestion_verb = base[:-1] + 'ies'
+                        else:
+                            suggestion_verb = base + 's'
+                elif (not is_3ps) and token.tag_ == 'VBZ':
+                    wrong = True
+                    base = token.lemma_.lower()
+                    if base == 'be':
+                        suggestion_verb = 'am' if child.text.lower() == 'i' else 'are'
+                    else:
+                        suggestion_verb = base  # base form
+
+                if wrong:
+                    pair = (
+                        f"{child.text} {token.text}"
+                        if child.i + 1 == token.i
+                        else f"{child.text} ... {token.text}"
+                    )
+                    mistakes.append({
+                        'error_type': 'GRAMMAR',
+                        'rule_id': 'CUSTOM_DEP_SVA',
+                        'message': f"Subject '{child.text}' and verb '{token.text}' don't agree",
+                        'mistake_text': pair,
+                        'context': text,
+                        'position': {'start': token.idx, 'end': token.idx + len(token.text)},
+                        'suggestions': [suggestion_verb],
+                        'severity': 'high',
+                    })
+
+        # Pattern B: was/were (VBD of 'be') agreement — same dep-parse approach.
+        # Falls back to head's nsubj when 'was'/'were' is an auxiliary, so e.g.
+        # "The boys was running" (was as aux of running) gets caught.
+        for token in doc:
+            if token.lemma_.lower() != 'be' or token.tag_ != 'VBD':
+                continue
+            text_low = token.text.lower()
+            if text_low not in ('was', 'were'):
+                continue
+            subj_candidates = [c for c in token.children if c.dep_ in ('nsubj', 'nsubjpass')]
+            if not subj_candidates and token.dep_ == 'aux':
+                subj_candidates = [c for c in token.head.children if c.dep_ in ('nsubj', 'nsubjpass')]
+            for child in subj_candidates:
+                subj_low = child.text.lower()
+                if subj_low == 'i':
+                    expects = 'was'
+                elif subj_low in ('he', 'she', 'it'):
+                    expects = 'was'
+                elif subj_low in ('you', 'we', 'they'):
+                    expects = 'were'
+                elif child.tag_ in ('NN', 'NNP'):
+                    expects = 'was'
+                elif child.tag_ in ('NNS', 'NNPS'):
+                    expects = 'were'
+                else:
+                    expects = None
+                if expects and expects != text_low:
+                    pair = (
+                        f"{child.text} {token.text}"
+                        if child.i + 1 == token.i
+                        else f"{child.text} ... {token.text}"
+                    )
+                    mistakes.append({
+                        'error_type': 'GRAMMAR',
+                        'rule_id': 'CUSTOM_WAS_WERE_AGREEMENT',
+                        'message': f"'{child.text}' takes '{expects}', not '{token.text}'",
+                        'mistake_text': pair,
+                        'context': text,
+                        'position': {'start': token.idx, 'end': token.idx + len(token.text)},
+                        'suggestions': [expects],
+                        'severity': 'high',
+                    })
+
+        # ====================================================================================
+        # ARTICLE: a vs an based on the SOUND of the next word
+        # 'a' before consonant sound ("a university", "a one-time"); 'an' before
+        # vowel sound ("an hour", "an honest"). Small exception lists handle
+        # spelling/pronunciation mismatches.
+        # ====================================================================================
+        consonant_sound_vowel_initial = {
+            'one', 'once', 'european', 'eulogy', 'university', 'unicorn',
+            'union', 'unique', 'unit', 'united', 'universe', 'use', 'used',
+            'user', 'usual', 'usually', 'useful', 'usable', 'eu',
+        }
+        vowel_sound_consonant_initial = {
+            'hour', 'hourly', 'honest', 'honestly', 'honor', 'honorable',
+            'honored', 'heir', 'heiress',
+        }
+        for i, token in enumerate(doc):
+            if token.text.lower() not in ('a', 'an'):
+                continue
+            if i + 1 >= len(doc):
+                continue
+            next_word = doc[i + 1].text.lower()
+            if not next_word or not next_word[0].isalpha():
+                continue
+            if next_word in consonant_sound_vowel_initial:
+                next_starts_with_vowel_sound = False
+            elif next_word in vowel_sound_consonant_initial:
+                next_starts_with_vowel_sound = True
+            else:
+                next_starts_with_vowel_sound = next_word[0] in 'aeiou'
+
+            actual = token.text.lower()
+            if next_starts_with_vowel_sound and actual == 'a':
+                suggestion = 'An' if token.text[0].isupper() else 'an'
+                mistakes.append({
+                    'error_type': 'Article',
+                    'rule_id': 'CUSTOM_A_AN_VOWEL',
+                    'message': f"Use 'an' before '{doc[i + 1].text}' (vowel sound)",
+                    'mistake_text': f"{token.text} {doc[i + 1].text}",
+                    'context': text,
+                    'position': {'start': token.idx, 'end': token.idx + len(token.text)},
+                    'suggestions': [suggestion],
+                    'severity': 'high',
+                })
+            elif (not next_starts_with_vowel_sound) and actual == 'an':
+                suggestion = 'A' if token.text[0].isupper() else 'a'
+                mistakes.append({
+                    'error_type': 'Article',
+                    'rule_id': 'CUSTOM_A_AN_VOWEL',
+                    'message': f"Use 'a' before '{doc[i + 1].text}' (consonant sound)",
+                    'mistake_text': f"{token.text} {doc[i + 1].text}",
+                    'context': text,
+                    'position': {'start': token.idx, 'end': token.idx + len(token.text)},
+                    'suggestions': [suggestion],
+                    'severity': 'high',
+                })
+
+        # ====================================================================================
+        # TENSE — time-marker mismatches
+        # If the sentence contains a past-only marker (yesterday/ago/last X),
+        # the main verbs should be past — not raw present.
+        # If it contains a future-only marker (tomorrow/next X), main verbs
+        # should be future ('will' + base) — not past tense.
+        # ====================================================================================
+        last_time_words = {
+            'week', 'month', 'year', 'night', 'monday', 'tuesday', 'wednesday',
+            'thursday', 'friday', 'saturday', 'sunday', 'summer', 'winter',
+            'spring', 'fall', 'autumn', 'time',
+        }
+        next_time_words = {
+            'week', 'month', 'year', 'monday', 'tuesday', 'wednesday',
+            'thursday', 'friday', 'saturday', 'sunday', 'time',
+        }
+        for sent in doc.sents:
+            sent_lower_words = [t.text.lower() for t in sent]
+            has_past_marker = ('yesterday' in sent_lower_words) or ('ago' in sent_lower_words)
+            for k, w in enumerate(sent_lower_words):
+                if w == 'last' and k + 1 < len(sent_lower_words) and sent_lower_words[k + 1] in last_time_words:
+                    has_past_marker = True
+                    break
+
+            has_future_marker = 'tomorrow' in sent_lower_words
+            for k, w in enumerate(sent_lower_words):
+                if w == 'next' and k + 1 < len(sent_lower_words) and sent_lower_words[k + 1] in next_time_words:
+                    has_future_marker = True
+                    break
+
+            if not (has_past_marker or has_future_marker):
+                continue
+
+            for v in sent:
+                if v.pos_ not in ('VERB', 'AUX'):
+                    continue
+                if has_past_marker and v.tag_ in ('VBP', 'VBZ'):
+                    mistakes.append({
+                        'error_type': 'Tense',
+                        'rule_id': 'CUSTOM_TIME_MARKER_PAST',
+                        'message': f"Past time marker in this sentence — use the past tense, not '{v.text}'",
+                        'mistake_text': v.text,
+                        'context': text,
+                        'position': {'start': v.idx, 'end': v.idx + len(v.text)},
+                        'suggestions': [],
+                        'severity': 'high',
+                    })
+                if has_future_marker and v.tag_ == 'VBD':
+                    mistakes.append({
+                        'error_type': 'Tense',
+                        'rule_id': 'CUSTOM_TIME_MARKER_FUTURE',
+                        'message': f"Future time marker in this sentence — use 'will' + base form, not past '{v.text}'",
+                        'mistake_text': v.text,
+                        'context': text,
+                        'position': {'start': v.idx, 'end': v.idx + len(v.text)},
+                        'suggestions': [f"will {v.lemma_}"],
+                        'severity': 'high',
+                    })
+
+        # ====================================================================================
+        # TENSE — 'will' + non-base verb form (e.g. "I will went", "she will ate",
+        # "she will walked"). Note: spaCy aggressively re-tags inflected verbs
+        # after a modal as VB (base form) AND mis-lemmatizes irregulars like
+        # "ate" → "ate", so we can't rely on tag_/lemma_ alone. We use TWO
+        # signals: surface != lemma (catches "walked" → "walk", "went" → "go"
+        # when spaCy gets it right) AND a hard-coded irregular-past dict
+        # (catches "ate" / "swam" / etc. that spaCy gets wrong).
+        irregular_past_to_base = {
+            # Past simple
+            'ate': 'eat', 'went': 'go', 'saw': 'see', 'ran': 'run',
+            'came': 'come', 'took': 'take', 'did': 'do', 'made': 'make',
+            'said': 'say', 'got': 'get', 'gave': 'give', 'found': 'find',
+            'thought': 'think', 'told': 'tell', 'became': 'become',
+            'left': 'leave', 'felt': 'feel', 'brought': 'bring',
+            'began': 'begin', 'kept': 'keep', 'held': 'hold',
+            'wrote': 'write', 'stood': 'stand', 'heard': 'hear',
+            'meant': 'mean', 'met': 'meet', 'paid': 'pay', 'sat': 'sit',
+            'spoke': 'speak', 'led': 'lead', 'grew': 'grow',
+            'lost': 'lose', 'fell': 'fall', 'sent': 'send',
+            'built': 'build', 'understood': 'understand', 'drew': 'draw',
+            'broke': 'break', 'spent': 'spend', 'rose': 'rise',
+            'drove': 'drive', 'bought': 'buy', 'wore': 'wear',
+            'chose': 'choose', 'caught': 'catch', 'taught': 'teach',
+            'fought': 'fight', 'sang': 'sing', 'sank': 'sink',
+            'swam': 'swim', 'drank': 'drink', 'flew': 'fly',
+            'threw': 'throw', 'knew': 'know', 'shook': 'shake',
+            'hid': 'hide', 'rode': 'ride', 'rang': 'ring',
+            'slept': 'sleep', 'wept': 'weep', 'swept': 'sweep',
+            'fed': 'feed', 'sped': 'speed', 'forgot': 'forget',
+            'forgave': 'forgive', 'sold': 'sell', 'won': 'win',
+            'shone': 'shine', 'stuck': 'stick', 'struck': 'strike',
+            'bent': 'bend', 'lent': 'lend',
+            # Past participles (irregular). spaCy mis-lemmatizes these as
+            # themselves when they appear after a modal — same fix as 'ate'.
+            'eaten': 'eat', 'gone': 'go', 'seen': 'see',
+            'written': 'write', 'taken': 'take', 'given': 'give',
+            'broken': 'break', 'spoken': 'speak', 'chosen': 'choose',
+            'driven': 'drive', 'ridden': 'ride', 'fallen': 'fall',
+            'forgotten': 'forget', 'frozen': 'freeze', 'hidden': 'hide',
+            'known': 'know', 'shown': 'show', 'stolen': 'steal',
+            'thrown': 'throw', 'worn': 'wear', 'begun': 'begin',
+            'drunk': 'drink', 'swum': 'swim', 'sung': 'sing',
+            'rung': 'ring', 'woken': 'wake', 'flown': 'fly',
+            'grown': 'grow', 'blown': 'blow',
+        }
+        # ====================================================================================
+        for i, token in enumerate(doc):
+            if token.text.lower() != 'will' or token.tag_ != 'MD':
+                continue
+            j = i + 1
+            while j < len(doc) and doc[j].text.lower() in (
+                "n't", 'not', 'never', 'always', 'really', 'definitely',
+                'probably', 'soon', 'just',
+            ):
+                j += 1
+            if j >= len(doc):
+                continue
+            next_t = doc[j]
+            if next_t.pos_ not in ('VERB', 'AUX'):
+                continue
+            surface_low = next_t.text.lower()
+            lemma_low = next_t.lemma_.lower()
+            irregular_base = irregular_past_to_base.get(surface_low)
+            looks_inflected = (surface_low != lemma_low) or (irregular_base is not None)
+            if looks_inflected:
+                base = irregular_base or lemma_low
+                mistakes.append({
+                    'error_type': 'Tense',
+                    'rule_id': 'CUSTOM_WILL_VBD',
+                    'message': f"After 'will', use base form '{base}' not '{next_t.text}'",
+                    'mistake_text': f"will {next_t.text}",
+                    'context': text,
+                    'position': {'start': token.idx, 'end': next_t.idx + len(next_t.text)},
+                    'suggestions': [f"will {base}"],
+                    'severity': 'high',
+                })
+
         return mistakes
     
     def _apply_custom_corrections(self, text: str, custom_mistakes: List[Dict]) -> str:

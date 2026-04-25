@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/gamification_service.dart';
 import '../theme/app_colors.dart';
 import 'badges_screen.dart';
 import 'home_screen.dart';
@@ -28,6 +29,17 @@ class RootScaffold extends StatefulWidget {
 class _RootScaffoldState extends State<RootScaffold> {
   int _currentIndex = 0;
   List<String> _badges = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    // Tick the practice-activity streak on app entry so just opening the
+    // app on a new calendar day counts toward the streak. Idempotent —
+    // multiple opens on the same day don't bump it twice. Fire-and-forget;
+    // the result lands in Firestore in the background and the home/profile
+    // screens will pick it up via their existing user-doc streams.
+    GamificationService().touchActivityToday();
+  }
 
   Stream<DocumentSnapshot<Map<String, dynamic>>>? get _userDocStream {
     final user = FirebaseAuth.instance.currentUser;

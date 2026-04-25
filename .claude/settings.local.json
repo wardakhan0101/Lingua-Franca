@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:speech.microsoft.com)",
+      "WebFetch(domain:azure.microsoft.com)",
+      "Bash(python *)",
+      "Bash(gcloud auth *)",
+      "Bash(gcloud config *)",
+      "Bash(gcloud run deploy grammar-checker *)",
+      "Bash(flutter analyze *)",
+      "Bash(curl -s -X POST https://grammar-checker-702584631438.us-central1.run.app/analyze -H 'Content-Type: application/json' -d '{\"text\":\"She go to school every day\"}')",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit --amend -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl -s -X POST https://grammar-checker-702584631438.us-central1.run.app/analyze -H 'Content-Type: application/json' -d '{\"text\":\"The team of doctors have arrived.\"}')"
+    ]
+  }
+}

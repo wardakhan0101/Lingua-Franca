@@ -453,6 +453,20 @@ class GamificationService {
     return (text.length - text.replaceAll(marker, '').length) ~/ marker.length;
   }
 
+  /// Public daily-activity tick. Fires the same streak update used at the
+  /// end of a practice session, but without requiring a session to have
+  /// happened — call it once on app entry (e.g. RootScaffold.initState) so
+  /// just opening the app on a new calendar day counts toward the streak.
+  /// Idempotent: practising twice in the same day does not double-count.
+  /// Returns the post-update streak value, or 0 if no signed-in user.
+  Future<int> touchActivityToday() async {
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) return 0;
+    final doc = await _firestore.collection('users').doc(userId).get();
+    final data = doc.data() ?? <String, dynamic>{};
+    return _updateStreak(userId, data);
+  }
+
   Future<int> _updateStreak(String userId, Map<String, dynamic> data) async {
     final now = DateTime.now();
     final lastActive = (data['lastActiveDate'] as Timestamp?)?.toDate();
