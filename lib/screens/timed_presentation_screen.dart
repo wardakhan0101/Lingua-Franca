@@ -47,9 +47,20 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
   String? _lastSuccessfulRecordingPath;
   StreamSubscription<List<int>>? _audioStreamSubscription;
   IOSink? _audioFileSink;
+  // Forks recorder bytes to Deepgram over its own stream — handing
+  // record's single-subscription stream directly to the Deepgram listener
+  // (or wrapping it with asBroadcastStream) starves the file sink and
+  // produces ~250ms WAVs even for multi-second recordings.
+  StreamController<List<int>>? _audioController;
 
   bool _isListening = false;
   bool _isAnalyzing = false;
+  // Set true for the entire async tail of _stopListening — without this,
+  // the widget rebuilds the moment _isListening flips false (line 339)
+  // and the now-visible Start button at the same screen position can swallow
+  // a bouncing tap and kick off a second recording mid-cleanup. That second
+  // recording overwrites _recordedFilePath with a ~120ms WAV.
+  bool _isStopping = false;
 
   // --- Timer Logic ---
   Timer? _timer;
@@ -204,7 +215,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
   }
 
   void _startListening() async {
-    if (_isListening) return;
+    if (_isListening || _isStopping) return;
 
     if (!await _checkPermission()) {
       _textController.text = 'Microphone permission denied.';
@@ -244,6 +255,14 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
         'sample_rate': 16000,
       };
 
+      await _audioController?.close();
+      _audioController = StreamController<List<int>>.broadcast();
+
+      _liveListener = _deepgram!.listen.liveListener(
+        _audioController!.stream,
+        queryParams: queryParams,
+      );
+
       final stream = await _recorder.startStream(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
@@ -252,16 +271,12 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
         ),
       );
 
-      final broadcastStream = stream.asBroadcastStream();
-
-      _audioStreamSubscription = broadcastStream.listen((audioData) {
+      _audioStreamSubscription = stream.listen((audioData) {
         _audioFileSink?.add(audioData);
+        if (_audioController != null && !_audioController!.isClosed) {
+          _audioController!.add(audioData);
+        }
       });
-
-      _liveListener = _deepgram!.listen.liveListener(
-        broadcastStream,
-        queryParams: queryParams,
-      );
 
       _deepgramSubscription = _liveListener!.stream.listen(
         (result) {
@@ -314,6 +329,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
   Future<void> _stopListening() async {
     if (!_isListening) return;
 
+    _isStopping = true;
     setState(() => _isListening = false);
     _stopTimer();
 
@@ -325,6 +341,9 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
       _liveListener = null;
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
+
+      await _audioController?.close();
+      _audioController = null;
 
       if (_audioFileSink != null) {
         await _audioFileSink!.flush();
@@ -348,6 +367,8 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
     } catch (e) {
       print('Error stopping listener: $e');
       setState(() => _isListening = false);
+    } finally {
+      _isStopping = false;
     }
   }
 
@@ -631,6 +652,7 @@ class _TimedPresentationScreenState extends State<TimedPresentationScreen>
     _textController.dispose();
     _scrollController.dispose(); // NEW: Dispose
     _audioFileSink?.close();
+    _audioController?.close();
     super.dispose();
   }
 

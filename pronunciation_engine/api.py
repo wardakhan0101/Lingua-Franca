@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from phonemizer import phonemize
 from phonemizer.backend import EspeakBackend
 
+from accent_detector import detect_accent
 from canonicalizer import canonicalize_sequence, split_espeak_string
 from gop_scorer import overall_score, score_aligned_pairs, word_score
 from phoneme_aligner import align
@@ -284,7 +285,8 @@ async def analyze(
         ratio_non_blank = non_blank_frames / max(1, inference.num_frames)
 
         overall = overall_score([w["score"] for w in per_word])
-        if ratio_non_blank < 0.05:
+        is_silent = ratio_non_blank < 0.05
+        if is_silent:
             overall = min(overall, 15)
 
         # Convert defaultdicts to regular dicts for JSON.
@@ -297,10 +299,21 @@ async def analyze(
             for p, v in phoneme_stats.items()
         }
 
+        # Skip accent inference on silent audio — there's no signal to
+        # vote on, and "we mostly heard X English" doesn't make sense
+        # when the user didn't really speak.
+        if is_silent:
+            accent = {"label": None, "confidence": 0.0, "evidence": []}
+        else:
+            accent = detect_accent(per_word, phoneme_stats_out)
+
         return {
             "overall_score": overall,
             "per_word": per_word,
             "phoneme_stats": phoneme_stats_out,
+            "detected_accent": accent["label"],
+            "accent_confidence": accent["confidence"],
+            "accent_evidence": accent["evidence"],
         }
 
     except HTTPException:

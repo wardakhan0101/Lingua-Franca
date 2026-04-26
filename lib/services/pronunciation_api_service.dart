@@ -65,6 +65,10 @@ class PronunciationApiService {
         "Pronunciation result: overall=${data['overall_score']}, "
         "${(data['per_word'] as List?)?.length ?? 0} words",
       );
+      debugPrint(
+        "Accent payload: label=${data['detected_accent']} "
+        "conf=${data['accent_confidence']} ev=${data['accent_evidence']}",
+      );
       return data;
     } else {
       debugPrint("Pronunciation API error: ${response.body}");
@@ -123,10 +127,54 @@ class PronunciationApiService {
             ? 0
             : (wordScores.reduce((a, b) => a + b) / wordScores.length).round();
 
+    // Confidence-weighted vote across the per-turn accent labels. Re-running
+    // the detector on the merged per_word would be more accurate but means
+    // either a second round trip or a Dart re-implementation; voting works
+    // well enough since each turn's confidence already reflects how clear
+    // the signal was on that turn's audio.
+    final Map<String, double> accentVotes = {};
+    for (final turn in turnResults) {
+      final label = turn['detected_accent'] as String?;
+      if (label == null) continue;
+      final conf = (turn['accent_confidence'] as num?)?.toDouble() ?? 0.0;
+      if (conf <= 0) continue;
+      accentVotes[label] = (accentVotes[label] ?? 0.0) + conf;
+    }
+
+    String? mergedLabel;
+    double mergedConfidence = 0.0;
+    List<String> mergedEvidence = const [];
+    if (accentVotes.isNotEmpty) {
+      final total = accentVotes.values.fold<double>(0.0, (a, b) => a + b);
+      final winner = accentVotes.entries.reduce(
+        (a, b) => a.value >= b.value ? a : b,
+      );
+      mergedLabel = winner.key;
+      mergedConfidence =
+          total > 0 ? double.parse((winner.value / total).toStringAsFixed(2)) : 0.0;
+      // Surface evidence from the highest-confidence turn that voted for
+      // the winning label — that turn's bullets are the most representative
+      // explanation of why we landed where we did.
+      double bestMatch = -1.0;
+      for (final turn in turnResults) {
+        if (turn['detected_accent'] != winner.key) continue;
+        final c = (turn['accent_confidence'] as num?)?.toDouble() ?? 0.0;
+        if (c > bestMatch) {
+          bestMatch = c;
+          final ev = turn['accent_evidence'] as List?;
+          mergedEvidence =
+              ev == null ? const [] : ev.map((e) => e.toString()).toList();
+        }
+      }
+    }
+
     return {
       'overall_score': overall,
       'per_word': perWord,
       'phoneme_stats': phonemeStats,
+      'detected_accent': mergedLabel,
+      'accent_confidence': mergedConfidence,
+      'accent_evidence': mergedEvidence,
     };
   }
 }

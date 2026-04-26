@@ -12,6 +12,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from accent_detector import detect_accent
 from canonicalizer import canonicalize_phoneme, canonicalize_sequence, split_espeak_string
 from gop_scorer import overall_score, score_aligned_pairs, word_score
 from phoneme_aligner import OpType, align
@@ -168,6 +169,125 @@ def test_word_score_averages_phoneme_scores():
 def test_overall_score_excludes_none_words():
     assert overall_score([80, 90, None]) == 85
     assert overall_score([None, None]) == 0
+
+
+# ---------------------------------------------------------------------------
+# accent_detector
+# ---------------------------------------------------------------------------
+
+
+def _scored_word(word, expected, actual):
+    """Compact per_word fixture builder. The detector only reads `score` to
+    filter out skipped words plus `expected_phonemes` / `actual_phonemes`
+    for the rhoticity check, so we don't need real phoneme_scores or issues.
+    """
+    return {
+        "word": word,
+        "score": 80,
+        "start": 0.0,
+        "end": 1.0,
+        "expected_phonemes": expected,
+        "actual_phonemes": actual,
+        "phoneme_scores": [],
+        "issues": [],
+    }
+
+
+def _filler_words(n):
+    """N neutral scored words with no rhotic/dental content — used to clear
+    the MIN_SCORED_WORDS gate without polluting any marker's vote."""
+    return [_scored_word(f"w{i}", ["k", "æ", "t"], ["k", "æ", "t"]) for i in range(n)]
+
+
+def test_accent_pakistani_dental_substitutions():
+    # /θ/ → /t/ four times, /ð/ → /d/ three times. Ten scored words clears
+    # MIN_SCORED_WORDS. No coda-/ɹ/ words, so no rhoticity signal competes.
+    per_word = _filler_words(10)
+    phoneme_stats = {
+        "θ": {"expected": 5, "correct": 1, "substitutions": {"t": 4}},
+        "ð": {"expected": 4, "correct": 1, "substitutions": {"d": 3}},
+    }
+    result = detect_accent(per_word, phoneme_stats)
+    assert result["label"] == "pakistani"
+    assert result["confidence"] >= 0.6
+    assert any("/θ/" in e for e in result["evidence"])
+
+
+def test_accent_pakistani_v_w_confusion():
+    per_word = _filler_words(10)
+    phoneme_stats = {
+        "v": {"expected": 4, "correct": 1, "substitutions": {"w": 3}},
+        "w": {"expected": 3, "correct": 2, "substitutions": {"v": 1}},
+    }
+    result = detect_accent(per_word, phoneme_stats)
+    # v↔w alone may not always clear thresholds, but with 4 hits it should.
+    assert result["label"] == "pakistani"
+    assert any("/v/" in e or "/w/" in e for e in result["evidence"])
+
+
+def test_accent_american_rhotic_coda():
+    # Six words ending in /ɹ/, all retained in actual phonemes.
+    per_word = [
+        _scored_word("car", ["k", "ɑ", "ɹ"], ["k", "ɑ", "ɹ"]),
+        _scored_word("park", ["p", "ɑ", "ɹ", "k"], ["p", "ɑ", "ɹ", "k"]),
+        _scored_word("father", ["f", "ɑ", "ð", "ə", "ɹ"], ["f", "ɑ", "ð", "ə", "ɹ"]),
+        _scored_word("water", ["w", "ɑ", "t", "ə", "ɹ"], ["w", "ɑ", "t", "ə", "ɹ"]),
+        _scored_word("better", ["b", "ɛ", "t", "ə", "ɹ"], ["b", "ɛ", "t", "ə", "ɹ"]),
+        _scored_word("here", ["h", "i", "ɹ"], ["h", "i", "ɹ"]),
+        _scored_word("the", ["ð", "ə"], ["ð", "ə"]),
+        _scored_word("a", ["ə"], ["ə"]),
+    ]
+    phoneme_stats = {}
+    result = detect_accent(per_word, phoneme_stats)
+    assert result["label"] == "american"
+    assert any("/r/" in e for e in result["evidence"])
+
+
+def test_accent_british_non_rhotic_coda():
+    # Same six coda-/ɹ/ words, but the recognizer didn't hear the /ɹ/.
+    per_word = [
+        _scored_word("car", ["k", "ɑ", "ɹ"], ["k", "ɑ"]),
+        _scored_word("park", ["p", "ɑ", "ɹ", "k"], ["p", "ɑ", "k"]),
+        _scored_word("father", ["f", "ɑ", "ð", "ə", "ɹ"], ["f", "ɑ", "ð", "ə"]),
+        _scored_word("water", ["w", "ɑ", "t", "ə", "ɹ"], ["w", "ɑ", "t", "ə"]),
+        _scored_word("better", ["b", "ɛ", "t", "ə", "ɹ"], ["b", "ɛ", "t", "ə"]),
+        _scored_word("here", ["h", "i", "ɹ"], ["h", "i"]),
+        _scored_word("the", ["ð", "ə"], ["ð", "ə"]),
+        _scored_word("a", ["ə"], ["ə"]),
+    ]
+    phoneme_stats = {}
+    result = detect_accent(per_word, phoneme_stats)
+    assert result["label"] == "british"
+    assert any("/r/" in e for e in result["evidence"])
+
+
+def test_accent_returns_none_when_audio_too_short():
+    # Three words — under MIN_SCORED_WORDS — should refuse to label even
+    # if the marker substitutions would otherwise scream "Pakistani".
+    per_word = [
+        _scored_word("think", ["θ", "ɪ", "ŋ", "k"], ["t", "ɪ", "ŋ", "k"]),
+        _scored_word("this", ["ð", "ɪ", "s"], ["d", "ɪ", "s"]),
+        _scored_word("they", ["ð", "eɪ"], ["d", "eɪ"]),
+    ]
+    phoneme_stats = {
+        "θ": {"expected": 1, "correct": 0, "substitutions": {"t": 1}},
+        "ð": {"expected": 2, "correct": 0, "substitutions": {"d": 2}},
+    }
+    result = detect_accent(per_word, phoneme_stats)
+    assert result["label"] is None
+    assert result["confidence"] == 0.0
+
+
+def test_accent_returns_none_when_no_markers_fired():
+    # Plenty of words but none of the marker phonemes in play. The detector
+    # must NOT guess — it returns None and the UI hides the card.
+    per_word = _filler_words(12)
+    phoneme_stats = {
+        "k": {"expected": 12, "correct": 12, "substitutions": {}},
+        "æ": {"expected": 12, "correct": 12, "substitutions": {}},
+    }
+    result = detect_accent(per_word, phoneme_stats)
+    assert result["label"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,12 @@
       "Bash(git commit -m ' *)",
       "Bash(git commit --amend -m ' *)",
       "Bash(git push *)",
-      "Bash(curl -s -X POST https://grammar-checker-702584631438.us-central1.run.app/analyze -H 'Content-Type: application/json' -d '{\"text\":\"The team of doctors have arrived.\"}')"
+      "Bash(curl -s -X POST https://grammar-checker-702584631438.us-central1.run.app/analyze -H 'Content-Type: application/json' -d '{\"text\":\"The team of doctors have arrived.\"}')",
+      "Bash(git commit *)",
+      "Bash(xargs grep *)",
+      "Bash(grep -v \"//\")",
+      "Bash(git fetch *)",
+      "Bash(git pull *)"
     ]
   }
 }

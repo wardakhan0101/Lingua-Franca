@@ -135,6 +135,12 @@ class _PronunciationReportScreenState extends State<PronunciationReportScreen>
     final data = widget.pronunciationData;
     final overall = (data['overall_score'] as num?)?.toInt() ?? 0;
     final perWord = (data['per_word'] as List?) ?? const [];
+    final accentLabel = data['detected_accent'] as String?;
+    final accentConfidence =
+        (data['accent_confidence'] as num?)?.toDouble() ?? 0.0;
+    final accentEvidence = List<String>.from(
+      (data['accent_evidence'] as List?) ?? const [],
+    );
 
     return Scaffold(
       backgroundColor: _bg,
@@ -144,12 +150,95 @@ class _PronunciationReportScreenState extends State<PronunciationReportScreen>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _overallCard(overall, perWord.length),
+            if (accentLabel != null) ...[
+              const SizedBox(height: 16),
+              _accentCard(accentLabel, accentConfidence, accentEvidence),
+            ],
             const SizedBox(height: 16),
             _transcriptCard(perWord),
             const SizedBox(height: 16),
             if (widget.earnedXp > 0) _xpBadge(widget.earnedXp),
           ],
         ),
+      ),
+    );
+  }
+
+  static const Map<String, String> _accentDisplayName = {
+    'american': 'American English',
+    'british': 'British English',
+    'pakistani': 'Pakistani English',
+  };
+
+  Widget _accentCard(String label, double confidence, List<String> evidence) {
+    final displayName = _accentDisplayName[label] ?? label;
+    final percent = (confidence * 100).round();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeading(Icons.record_voice_over, 'Detected accent'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 17,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: _accent.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$percent% confidence',
+                  style: const TextStyle(
+                    color: _accent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (evidence.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (final bullet in evidence)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '•  ',
+                      style: TextStyle(color: Colors.black54, fontSize: 13),
+                    ),
+                    Expanded(
+                      child: Text(
+                        bullet,
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
       ),
     );
   }
